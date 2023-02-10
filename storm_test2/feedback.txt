@@ -1,0 +1,1 @@
+Set the batch size and learning rate at the same time, set the learning rate to 0.1 and continuously increase it by 0.1, start with the batch size 1 and increase it by 2 to achieve a higher batch size and learning rate.

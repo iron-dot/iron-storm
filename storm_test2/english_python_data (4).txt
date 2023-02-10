@@ -1,0 +1,4070 @@
+#1 Write a ai program to make better ai 
+
+import random
+import time
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torchtext
+from torch.utils.data import DataLoader, Dataset
+from torchtext.legacy import data
+from torchtext.legacy.data import BucketIterator, Field, Iterator
+import nltk
+import re
+import spacy
+import tensorflow as tf
+import tensorflow_datasets as tfds
+import datetime
+import gradio as gr
+from translate import Translator
+import sys
+import json
+import math
+import os
+import urllib.request
+import webbrowser
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import wikipedia
+import wolframalpha
+from nltk.stem.porter import PorterStemmer
+import csv
+
+start = time.time()
+
+
+
+
+
+f = open("codecreate_data.txt", "r", encoding='utf-8')
+file_lines = f.readlines()
+
+
+file_lines[:20]
+
+dps = []
+dp = None
+for line in file_lines:
+  if line[0] == "#":
+    if dp:
+      dp['solution'] = ''.join(dp['solution'])
+      dps.append(dp)
+    dp = {"question": None, "solution": []}
+    dp['question'] = line[1:]
+  else:
+    dp["solution"].append(line)
+i=0
+for dp in dps:
+  print("\n Question no: ", i+1)
+  i+=1
+  print(dp['question'][1:])
+  print(dp['solution'])
+  if i>49:
+    break
+print("Dataset size:", len(dps))
+from tokenize import tokenize, untokenize
+import io
+
+
+def tokenize_python_code(python_code_str):
+    python_tokens = list(tokenize(io.BytesIO(python_code_str.encode('utf-8')).readline))
+    tokenized_output = []
+    for i in range(0, len(python_tokens)):
+        tokenized_output.append((python_tokens[i].type, python_tokens[i].string))
+    return tokenized_output
+tokenized_sample = tokenize_python_code(dps[1]['solution'])
+print(tokenized_sample)
+print(untokenize(tokenized_sample).decode('utf-8'))
+import keyword
+
+print(keyword.kwlist)
+def augment_tokenize_python_code(python_code_str, mask_factor=0.3):
+    
+
+    var_dict = {} # Dictionary that stores masked variables
+
+    # certain reserved words that should not be treated as normal variables and
+    # hence need to be skipped from our variable mask augmentations
+    skip_list = ['range', 'enumerate', 'print', 'ord', 'int', 'float', 'zip'
+                 'char', 'list', 'dict', 'tuple', 'set', 'len', 'sum', 'min', 'max']
+    skip_list.extend(keyword.kwlist)
+
+    var_counter = 1
+    python_tokens = list(tokenize(io.BytesIO(python_code_str.encode('utf-8')).readline))
+    tokenized_output = []
+
+    for i in range(0, len(python_tokens)):
+      if python_tokens[i].type == 1 and python_tokens[i].string not in skip_list:
+        
+        if i>0 and python_tokens[i-1].string in ['def', '.', 'import', 'raise', 'except', 'class']: # avoid masking modules, functions and error literals
+          skip_list.append(python_tokens[i].string)
+          tokenized_output.append((python_tokens[i].type, python_tokens[i].string))
+        elif python_tokens[i].string in var_dict:  # if variable is already masked
+          tokenized_output.append((python_tokens[i].type, var_dict[python_tokens[i].string]))
+        elif random.uniform(0, 1) > 1-mask_factor: # randomly mask variables
+          var_dict[python_tokens[i].string] = 'var_' + str(var_counter)
+          var_counter+=1
+          tokenized_output.append((python_tokens[i].type, var_dict[python_tokens[i].string]))
+        else:
+          skip_list.append(python_tokens[i].string)
+          tokenized_output.append((python_tokens[i].type, python_tokens[i].string))
+      
+      else:
+        tokenized_output.append((python_tokens[i].type, python_tokens[i].string))
+    
+    return tokenized_output
+tokenized_sample = augment_tokenize_python_code(dps[1]['solution'])
+print(tokenized_sample)
+
+python_problems_df = pd.DataFrame(dps)
+
+python_problems_df.head()
+
+python_problems_df.shape
+
+import numpy as np
+
+np.random.seed(0)
+msk = np.random.rand(len(python_problems_df)) < 0.85 # Splitting data into 85% train and 15% validation
+
+train_df = python_problems_df[msk]
+val_df = python_problems_df[~msk]
+train_df.shape
+val_df.shape
+SEED = 1234
+
+random.seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.backends.cudnn.deterministic = True
+Input = data.Field(tokenize = 'spacy',
+            init_token='<sos>', 
+            eos_token='<eos>', 
+            lower=True)
+
+Output = data.Field(tokenize = augment_tokenize_python_code,
+                    init_token='<sos>', 
+                    eos_token='<eos>', 
+                    lower=False)
+fields = [('Input', Input),('Output', Output)]
+train_example = []
+val_example = []
+
+train_expansion_factor = 100
+for j in range(train_expansion_factor):
+  for i in range(train_df.shape[0]):
+      try:
+          ex = data.Example.fromlist([train_df.question[i], train_df.solution[i]], fields)
+          train_example.append(ex)
+      except:
+          pass
+
+for i in range(val_df.shape[0]):
+    try:
+        ex = data.Example.fromlist([val_df.question[i], val_df.solution[i]], fields)
+        val_example.append(ex)
+    except:
+        pass       
+
+train_data = data.Dataset(train_example, fields)
+valid_data =  data.Dataset(val_example, fields)
+Input.build_vocab(train_data, min_freq = 0)
+Output.build_vocab(train_data, min_freq = 0)
+Output.vocab
+def save_vocab(vocab, path):
+    import pickle
+    output = open(path, 'wb')
+    pickle.dump(vocab, output)
+    output.close()
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device
+train_data[0].Output
+
+print(vars(train_data.examples[1]))
+class Encoder(nn.Module):
+    def __init__(self, 
+                 input_dim, 
+                 hid_dim, 
+                 n_layers, 
+                 n_heads, 
+                 pf_dim,
+                 dropout, 
+                 device,
+                 max_length = 1000):
+        super().__init__()
+
+        self.device = device
+        
+        self.tok_embedding = nn.Embedding(input_dim, hid_dim)
+        self.pos_embedding = nn.Embedding(max_length, hid_dim)
+        
+        self.layers = nn.ModuleList([EncoderLayer(hid_dim, 
+                                                  n_heads, 
+                                                  pf_dim,
+                                                  dropout, 
+                                                  device) 
+                                     for _ in range(n_layers)])
+        
+        self.dropout = nn.Dropout(dropout)
+        
+        self.scale = torch.sqrt(torch.FloatTensor([hid_dim])).to(device)
+        
+    def forward(self, src, src_mask):
+        
+        #src = [batch size, src len]
+        #src_mask = [batch size, 1, 1, src len]
+        
+        batch_size = src.shape[0]
+        src_len = src.shape[1]
+
+        pos = torch.arange(0, src_len).unsqueeze(0).repeat(batch_size, 1).to(self.device)
+        
+        #pos = [batch size, src len]
+        src = self.dropout((self.tok_embedding(src) * self.scale) + self.pos_embedding(pos))
+        
+        #src = [batch size, src len, hid dim]
+        
+        for layer in self.layers:
+            src = layer(src, src_mask)
+            
+        #src = [batch size, src len, hid dim]
+            
+        return src
+class EncoderLayer(nn.Module):
+    def __init__(self, 
+                 hid_dim, 
+                 n_heads, 
+                 pf_dim,  
+                 dropout, 
+                 device):
+        super().__init__()
+        
+        self.self_attn_layer_norm = nn.LayerNorm(hid_dim)
+        self.ff_layer_norm = nn.LayerNorm(hid_dim)
+        self.self_attention = MultiHeadAttentionLayer(hid_dim, n_heads, dropout, device)
+        self.positionwise_feedforward = PositionwiseFeedforwardLayer(hid_dim, 
+                                                                     pf_dim, 
+                                                                     dropout)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, src, src_mask):
+        
+        #src = [batch size, src len, hid dim]
+        #src_mask = [batch size, 1, 1, src len] 
+                
+        #self attention
+        _src, _ = self.self_attention(src, src, src, src_mask)
+        
+        #dropout, residual connection and layer norm
+        src = self.self_attn_layer_norm(src + self.dropout(_src))
+        
+        #src = [batch size, src len, hid dim]
+        
+        #positionwise feedforward
+        _src = self.positionwise_feedforward(src)
+        
+        #dropout, residual and layer norm
+        src = self.ff_layer_norm(src + self.dropout(_src))
+        
+        #src = [batch size, src len, hid dim]
+        
+        return src
+class PositionwiseFeedforwardLayer(nn.Module):
+    def __init__(self, hid_dim, pf_dim, dropout):
+        super().__init__()
+        
+        self.fc_1 = nn.Linear(hid_dim, pf_dim)
+        self.fc_2 = nn.Linear(pf_dim, hid_dim)
+        
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, x):
+        
+        #x = [batch size, seq len, hid dim]
+        
+        x = self.dropout(torch.relu(self.fc_1(x)))
+        
+        #x = [batch size, seq len, pf dim]
+        
+        x = self.fc_2(x)
+        
+        #x = [batch size, seq len, hid dim]
+        
+        return x
+class MultiHeadAttentionLayer(nn.Module):
+    def __init__(self, hid_dim, n_heads, dropout, device):
+        super().__init__()
+        
+        assert hid_dim % n_heads == 0
+        
+        self.hid_dim = hid_dim
+        self.n_heads = n_heads
+        self.head_dim = hid_dim // n_heads
+        
+        self.fc_q = nn.Linear(hid_dim, hid_dim)
+        self.fc_k = nn.Linear(hid_dim, hid_dim)
+        self.fc_v = nn.Linear(hid_dim, hid_dim)
+        
+        self.fc_o = nn.Linear(hid_dim, hid_dim)
+        
+        self.dropout = nn.Dropout(dropout)
+        
+        self.scale = torch.sqrt(torch.FloatTensor([self.head_dim])).to(device)
+        
+    def forward(self, query, key, value, mask = None):
+        
+        batch_size = query.shape[0]
+        
+        #query = [batch size, query len, hid dim]
+        #key = [batch size, key len, hid dim]
+        #value = [batch size, value len, hid dim]
+                
+        Q = self.fc_q(query)
+        K = self.fc_k(key)
+        V = self.fc_v(value)
+        
+        #Q = [batch size, query len, hid dim]
+        #K = [batch size, key len, hid dim]
+        #V = [batch size, value len, hid dim]
+                
+        Q = Q.view(batch_size, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        K = K.view(batch_size, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        V = V.view(batch_size, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        
+        #Q = [batch size, n heads, query len, head dim]
+        #K = [batch size, n heads, key len, head dim]
+        #V = [batch size, n heads, value len, head dim]
+                
+        energy = torch.matmul(Q, K.permute(0, 1, 3, 2)) / self.scale
+        
+        #energy = [batch size, n heads, query len, key len]
+        
+        if mask is not None:
+            energy = energy.masked_fill(mask == 0, -1e10)
+        
+        attention = torch.softmax(energy, dim = -1)
+                
+        #attention = [batch size, n heads, query len, key len]
+                
+        x = torch.matmul(self.dropout(attention), V)
+        
+        #x = [batch size, n heads, query len, head dim]
+        
+        x = x.permute(0, 2, 1, 3).contiguous()
+        
+        #x = [batch size, query len, n heads, head dim]
+        
+        x = x.view(batch_size, -1, self.hid_dim)
+        
+        #x = [batch size, query len, hid dim]
+        
+        x = self.fc_o(x)
+        
+        #x = [batch size, query len, hid dim]
+        
+        return x, attention
+class Decoder(nn.Module):
+    def __init__(self, 
+                 output_dim, 
+                 hid_dim, 
+                 n_layers, 
+                 n_heads, 
+                 pf_dim, 
+                 dropout, 
+                 device,
+                 max_length = 10000):
+        super().__init__()
+        
+        self.device = device
+        
+        self.tok_embedding = nn.Embedding(output_dim, hid_dim)
+        self.pos_embedding = nn.Embedding(max_length, hid_dim)
+        
+        self.layers = nn.ModuleList([DecoderLayer(hid_dim, 
+                                                  n_heads, 
+                                                  pf_dim, 
+                                                  dropout, 
+                                                  device)
+                                     for _ in range(n_layers)])
+        
+        self.fc_out = nn.Linear(hid_dim, output_dim)
+        
+        self.dropout = nn.Dropout(dropout)
+        
+        self.scale = torch.sqrt(torch.FloatTensor([hid_dim])).to(device)
+        
+    def forward(self, trg, enc_src, trg_mask, src_mask):
+        
+        #trg = [batch size, trg len]
+        #enc_src = [batch size, src len, hid dim]
+        #trg_mask = [batch size, 1, trg len, trg len]
+        #src_mask = [batch size, 1, 1, src len]
+                
+        batch_size = trg.shape[0]
+        trg_len = trg.shape[1]
+        
+        pos = torch.arange(0, trg_len).unsqueeze(0).repeat(batch_size, 1).to(self.device)
+                            
+        #pos = [batch size, trg len]
+
+        trg = self.dropout((self.tok_embedding(trg) * self.scale) + self.pos_embedding(pos))
+                
+        #trg = [batch size, trg len, hid dim]
+        
+        for layer in self.layers:
+            trg, attention = layer(trg, enc_src, trg_mask, src_mask)
+        
+        #trg = [batch size, trg len, hid dim]
+        #attention = [batch size, n heads, trg len, src len]
+        
+        output = self.fc_out(trg)
+        
+        #output = [batch size, trg len, output dim]
+            
+        return output, attention
+class DecoderLayer(nn.Module):
+    def __init__(self, 
+                 hid_dim, 
+                 n_heads, 
+                 pf_dim, 
+                 dropout, 
+                 device):
+        super().__init__()
+        
+        self.self_attn_layer_norm = nn.LayerNorm(hid_dim)
+        self.enc_attn_layer_norm = nn.LayerNorm(hid_dim)
+        self.ff_layer_norm = nn.LayerNorm(hid_dim)
+        self.self_attention = MultiHeadAttentionLayer(hid_dim, n_heads, dropout, device)
+        self.encoder_attention = MultiHeadAttentionLayer(hid_dim, n_heads, dropout, device)
+        self.positionwise_feedforward = PositionwiseFeedforwardLayer(hid_dim, 
+                                                                     pf_dim, 
+                                                                     dropout)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, trg, enc_src, trg_mask, src_mask):
+        
+        #trg = [batch size, trg len, hid dim]
+        #enc_src = [batch size, src len, hid dim]
+        #trg_mask = [batch size, 1, trg len, trg len]
+        #src_mask = [batch size, 1, 1, src len]
+        
+        #self attention
+        _trg, _ = self.self_attention(trg, trg, trg, trg_mask)
+        
+        #dropout, residual connection and layer norm
+        trg = self.self_attn_layer_norm(trg + self.dropout(_trg))
+            
+        #trg = [batch size, trg len, hid dim]
+            
+        #encoder attention
+        _trg, attention = self.encoder_attention(trg, enc_src, enc_src, src_mask)
+        # query, key, value
+        
+        #dropout, residual connection and layer norm
+        trg = self.enc_attn_layer_norm(trg + self.dropout(_trg))
+                    
+        #trg = [batch size, trg len, hid dim]
+        
+        #positionwise feedforward
+        _trg = self.positionwise_feedforward(trg)
+        
+        #dropout, residual and layer norm
+        trg = self.ff_layer_norm(trg + self.dropout(_trg))
+        
+        #trg = [batch size, trg len, hid dim]
+        #attention = [batch size, n heads, trg len, src len]
+        
+        return trg, attention
+class Seq2Seq(nn.Module):
+    def __init__(self, 
+                 encoder, 
+                 decoder, 
+                 src_pad_idx, 
+                 trg_pad_idx, 
+                 device):
+        super().__init__()
+        
+        self.encoder = encoder
+        self.decoder = decoder
+        self.src_pad_idx = src_pad_idx
+        self.trg_pad_idx = trg_pad_idx
+        self.device = device
+        
+    def make_src_mask(self, src):
+        
+        #src = [batch size, src len]
+        
+        src_mask = (src != self.src_pad_idx).unsqueeze(1).unsqueeze(2)
+
+        #src_mask = [batch size, 1, 1, src len]
+
+        return src_mask
+    
+    def make_trg_mask(self, trg):
+        
+        #trg = [batch size, trg len]
+        
+        trg_pad_mask = (trg != self.trg_pad_idx).unsqueeze(1).unsqueeze(2)
+        
+        #trg_pad_mask = [batch size, 1, 1, trg len]
+        
+        trg_len = trg.shape[1]
+        
+        trg_sub_mask = torch.tril(torch.ones((trg_len, trg_len), device = self.device)).bool()
+        
+        #trg_sub_mask = [trg len, trg len]
+            
+        trg_mask = trg_pad_mask & trg_sub_mask
+        
+        #trg_mask = [batch size, 1, trg len, trg len]
+        
+        return trg_mask
+
+    def forward(self, src, trg):
+        
+        #src = [batch size, src len]
+        #trg = [batch size, trg len]
+                
+        src_mask = self.make_src_mask(src)
+        trg_mask = self.make_trg_mask(trg)
+        
+        #src_mask = [batch size, 1, 1, src len]
+        #trg_mask = [batch size, 1, trg len, trg len]
+        
+        enc_src = self.encoder(src, src_mask)
+        
+        #enc_src = [batch size, src len, hid dim]
+                
+        output, attention = self.decoder(trg, enc_src, trg_mask, src_mask)
+        
+        #output = [batch size, trg len, output dim]
+        #attention = [batch size, n heads, trg len, src len]
+        
+        return output, attention
+INPUT_DIM = len(Input.vocab)
+OUTPUT_DIM = len(Output.vocab)
+HID_DIM = 256
+ENC_LAYERS = 3
+DEC_LAYERS = 3
+ENC_HEADS = 16
+DEC_HEADS = 16
+ENC_PF_DIM = 512
+DEC_PF_DIM = 512
+ENC_DROPOUT = 0.1
+DEC_DROPOUT = 0.1
+
+enc = Encoder(INPUT_DIM, 
+              HID_DIM, 
+              ENC_LAYERS, 
+              ENC_HEADS, 
+              ENC_PF_DIM, 
+              ENC_DROPOUT, 
+              device)
+
+dec = Decoder(OUTPUT_DIM, 
+              HID_DIM, 
+              DEC_LAYERS, 
+              DEC_HEADS, 
+              DEC_PF_DIM, 
+              DEC_DROPOUT, 
+              device)
+len(Output.vocab.__dict__['freqs'])
+SRC_PAD_IDX = Input.vocab.stoi[Input.pad_token]
+TRG_PAD_IDX = Output.vocab.stoi[Output.pad_token]
+
+model = Seq2Seq(enc, dec, SRC_PAD_IDX, TRG_PAD_IDX, device).to(device)
+
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+print(f'The model has {count_parameters(model):,} trainable parameters')
+def initialize_weights(m):
+    if hasattr(m, 'weight') and m.weight.dim() > 1:
+        nn.init.xavier_uniform_(m.weight.data)
+model.apply(initialize_weights);
+
+LEARNING_RATE = 0.0005
+f = open('lr.txt', 'w', encoding='utf-8')
+f.write(str(LEARNING_RATE))
+optimizer = torch.optim.Adam(model.parameters(), lr = LEARNING_RATE)
+
+f = open('optimizer.txt', 'w', encoding='utf-8')
+f.write("Adam")#기본은 아담 이지만 개선할때 걸린 옵티마이저를 이다음 개선 됬을때부터는 사용한다
+
+import torch
+import math
+import torch.nn as nn
+import torch.nn.functional as F
+
+class CrossEntropyLoss(nn.CrossEntropyLoss):
+    """CrossEntropyLoss - with ability to recieve distrbution as targets, and optional label smoothing"""
+
+    def __init__(self, weight=None, ignore_index=-100, reduction='mean', smooth_eps=None, smooth_dist=None, from_logits=True):
+        super(CrossEntropyLoss, self).__init__(weight=weight,
+                                               ignore_index=ignore_index, reduction=reduction)
+        self.smooth_eps = smooth_eps
+        self.smooth_dist = smooth_dist
+        self.from_logits = from_logits
+
+    def forward(self, input, target, smooth_dist=None):
+        if smooth_dist is None:
+            smooth_dist = self.smooth_dist
+        return cross_entropy(input, target, weight=self.weight, ignore_index=self.ignore_index,
+                             reduction=self.reduction, smooth_eps=self.smooth_eps,
+                             smooth_dist=smooth_dist, from_logits=self.from_logits)
+
+
+def cross_entropy(inputs, target, weight=None, ignore_index=-100, reduction='mean',
+                  smooth_eps=None, smooth_dist=None, from_logits=True):
+    """cross entropy loss, with support for target distributions and label smoothing https://arxiv.org/abs/1512.00567"""
+    smooth_eps = smooth_eps or 0
+
+    # ordinary log-liklihood - use cross_entropy from nn
+    if _is_long(target) and smooth_eps == 0:
+        if from_logits:
+            return F.cross_entropy(inputs, target, weight, ignore_index=ignore_index, reduction=reduction)
+        else:
+            return F.nll_loss(inputs, target, weight, ignore_index=ignore_index, reduction=reduction)
+
+    if from_logits:
+        # log-softmax of inputs
+        lsm = F.log_softmax(inputs, dim=-1)
+    else:
+        lsm = inputs
+
+    masked_indices = None
+    num_classes = inputs.size(-1)
+
+    if _is_long(target) and ignore_index >= 0:
+        masked_indices = target.eq(ignore_index)
+
+    if smooth_eps > 0 and smooth_dist is not None:
+        if _is_long(target):
+            target = onehot(target, num_classes).type_as(inputs)
+        if smooth_dist.dim() < target.dim():
+            smooth_dist = smooth_dist.unsqueeze(0)
+        target.lerp_(smooth_dist, smooth_eps)
+
+    if weight is not None:
+        lsm = lsm * weight.unsqueeze(0)
+
+    if _is_long(target):
+        eps_sum = smooth_eps / num_classes
+        eps_nll = 1. - eps_sum - smooth_eps
+        likelihood = lsm.gather(dim=-1, index=target.unsqueeze(-1)).squeeze(-1)
+        loss = -(eps_nll * likelihood + eps_sum * lsm.sum(-1))
+    else:
+        loss = -(target * lsm).sum(-1)
+
+    if masked_indices is not None:
+        loss.masked_fill_(masked_indices, 0)
+
+    if reduction == 'sum':
+        loss = loss.sum()
+    elif reduction == 'mean':
+        if masked_indices is None:
+            loss = loss.mean()
+        else:
+            loss = loss.sum() / float(loss.size(0) - masked_indices.sum())
+
+    return loss
+
+
+def onehot(indexes, N=None, ignore_index=None):
+    """
+    Creates a one-representation of indexes with N possible entries
+    if N is not specified, it will suit the maximum index appearing.
+    indexes is a long-tensor of indexes
+    ignore_index will be zero in onehot representation
+    """
+    if N is None:
+        N = indexes.max() + 1
+    sz = list(indexes.size())
+    output = indexes.new().byte().resize_(*sz, N).zero_()
+    output.scatter_(-1, indexes.unsqueeze(-1), 1)
+    if ignore_index is not None and ignore_index >= 0:
+        output.masked_fill_(indexes.eq(ignore_index).unsqueeze(-1), 0)
+    return output
+
+def _is_long(x):
+    if hasattr(x, 'data'):
+        x = x.data
+    return isinstance(x, torch.LongTensor) or isinstance(x, torch.cuda.LongTensor)
+def maskNLLLoss(inp, target, mask):
+    # print(inp.shape, target.shape, mask.sum())
+    nTotal = mask.sum()
+    crossEntropy = CrossEntropyLoss(ignore_index = TRG_PAD_IDX, smooth_eps=0.20)
+    loss = crossEntropy(inp, target)
+    loss = loss.to(device)
+    return loss, nTotal.item()
+
+criterion = maskNLLLoss
+
+from tqdm import tqdm
+
+def make_trg_mask(trg):
+        
+        #trg = [batch size, trg len]
+        
+        trg_pad_mask = (trg != TRG_PAD_IDX).unsqueeze(1).unsqueeze(2)
+        
+        #trg_pad_mask = [batch size, 1, 1, trg len]
+        
+        trg_len = trg.shape[1]
+        
+        trg_sub_mask = torch.tril(torch.ones((trg_len, trg_len), device = device)).bool()
+        
+        #trg_sub_mask = [trg len, trg len]
+            
+        trg_mask = trg_pad_mask & trg_sub_mask
+        
+        #trg_mask = [batch size, 1, trg len, trg len]
+        
+        return trg_mask
+
+def train(model, iterator, optimizer, criterion, clip):
+    
+    model.train()
+    
+    n_totals = 0
+    print_losses = []
+    for i, batch in tqdm(enumerate(iterator), total=len(iterator)):
+        # print(batch)
+        loss = 0
+        src = batch.Input.permute(1, 0)
+        trg = batch.Output.permute(1, 0)
+        trg_mask = make_trg_mask(trg)
+        optimizer.zero_grad()
+        
+        output, _ = model(src, trg[:,:-1])
+                
+        #output = [batch size, trg len - 1, output dim]
+        #trg = [batch size, trg len]
+            
+        output_dim = output.shape[-1]
+            
+        output = output.contiguous().view(-1, output_dim)
+        trg = trg[:,1:].contiguous().view(-1)
+                
+        #output = [batch size * trg len - 1, output dim]
+        #trg = [batch size * trg len - 1]
+            
+        mask_loss, nTotal = criterion(output, trg, trg_mask)
+        
+        mask_loss.backward()
+        
+        torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+        
+        optimizer.step()
+        
+        print_losses.append(mask_loss.item() * nTotal)
+        n_totals += nTotal
+
+
+        
+    return sum(print_losses) / n_totals
+
+def evaluate(model, iterator, criterion):
+    
+    model.eval()
+    
+    n_totals = 0
+    print_losses = []
+    
+    with torch.no_grad():
+    
+        for i, batch in tqdm(enumerate(iterator), total=len(iterator)):
+
+            src = batch.Input.permute(1, 0)
+            trg = batch.Output.permute(1, 0)
+            trg_mask = make_trg_mask(trg)
+
+            output, _ = model(src, trg[:,:-1])
+            
+            #output = [batch size, trg len - 1, output dim]
+            #trg = [batch size, trg len]
+            
+            output_dim = output.shape[-1]
+            
+            output = output.contiguous().view(-1, output_dim)
+            trg = trg[:,1:].contiguous().view(-1)
+            
+            #output = [batch size * trg len - 1, output dim]
+            #trg = [batch size * trg len - 1]
+            
+            mask_loss, nTotal = criterion(output, trg, trg_mask)
+
+            print_losses.append(mask_loss.item() * nTotal)
+            n_totals += nTotal
+
+        
+    return sum(print_losses) / n_totals
+
+def epoch_time(start_time, end_time):
+    elapsed_time = end_time - start_time
+    elapsed_mins = int(elapsed_time / 60)
+    elapsed_secs = int(elapsed_time - (elapsed_mins * 60))
+    return elapsed_mins, elapsed_secs
+
+
+def learn(N_EPOCHS):
+    N_EPOCHS = N_EPOCHS
+    CLIP = 1
+    best_valid_loss = float('inf')
+
+    for epoch in range(N_EPOCHS):
+        import time
+        start_time = time.time()
+        
+        train_example = []
+        val_example = []
+
+        for i in range(train_df.shape[0]):
+            try:
+                ex = data.Example.fromlist([train_df.question[i], train_df.solution[i]], fields)
+                train_example.append(ex)
+            except:
+                pass
+
+        for i in range(val_df.shape[0]):
+            try:
+                ex = data.Example.fromlist([val_df.question[i], val_df.solution[i]], fields)
+                val_example.append(ex)
+            except:
+                pass       
+
+        train_data = data.Dataset(train_example, fields)
+        valid_data =  data.Dataset(val_example, fields)
+
+        BATCH_SIZE = 1
+        f = open('bs.txt', 'w', encoding='utf-8')
+        f.write(str(BATCH_SIZE))
+        train_iterator, valid_iterator = BucketIterator.splits((train_data, valid_data), batch_size = BATCH_SIZE, 
+                                                                    sort_key = lambda x: len(x.Input),
+                                                                    sort_within_batch=True, device = device)
+
+        train_loss = train(model, train_iterator, optimizer, criterion, CLIP)
+        valid_loss = evaluate(model, valid_iterator, criterion)
+        
+        end_time = time.time()
+        
+        epoch_mins, epoch_secs = epoch_time(start_time, end_time)
+        
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+            torch.save(model.state_dict(), 'code_create_model.pt')
+        
+        print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
+        print(f'\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
+        print(f'\t Val. Loss: {valid_loss:.3f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
+        f = open('loss.txt', 'w', encoding = 'utf-8')
+        f.write(f'{valid_loss:.0f}')
+learn(N_EPOCHS=1)
+
+SRC = Input
+TRG = Output
+def translate_sentence(sentence, src_field, trg_field, model, device, max_len = 50000):
+    
+    model.eval()
+        
+    if isinstance(sentence, str):
+        nlp = spacy.load('en')
+        tokens = [token.text.lower() for token in nlp(sentence)]
+    else:
+        tokens = [token.lower() for token in sentence]
+
+    tokens = [src_field.init_token] + tokens + [src_field.eos_token]
+        
+    src_indexes = [src_field.vocab.stoi[token] for token in tokens]
+
+    src_tensor = torch.LongTensor(src_indexes).unsqueeze(0).to(device)
+    
+    src_mask = model.make_src_mask(src_tensor)
+    
+    with torch.no_grad():
+        enc_src = model.encoder(src_tensor, src_mask)
+
+    trg_indexes = [trg_field.vocab.stoi[trg_field.init_token]]
+
+    for i in range(max_len):
+
+        trg_tensor = torch.LongTensor(trg_indexes).unsqueeze(0).to(device)
+
+        trg_mask = model.make_trg_mask(trg_tensor)
+        
+        with torch.no_grad():
+            output, attention = model.decoder(trg_tensor, enc_src, trg_mask, src_mask)
+        
+        pred_token = output.argmax(2)[:,-1].item()
+        
+        trg_indexes.append(pred_token)
+
+        if pred_token == trg_field.vocab.stoi[trg_field.eos_token]:
+            break
+    
+    trg_tokens = [trg_field.vocab.itos[i] for i in trg_indexes]
+    
+    return trg_tokens[1:], attention
+
+def listToString(str_list):
+    
+    result = ""
+
+    for s in str_list:
+
+        result += s + ""
+
+    return result.strip()
+
+
+
+now = datetime.datetime.now()
+def csv_writer2(time, name_list):
+    with open('judgment data.csv', mode='a', newline='', encoding='utf-8') as RESULT_writer_file:
+        RESULT_writer = csv.writer(RESULT_writer_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        '''RESULT_writer.writerow(
+            ["file name", "loss", "EPOCH", "working time"])'''
+        for row in name_list: # 위의 name_list를 순차적으로 순회
+            RESULT_writer.writerow([row[0],row[1],row[2],row[3]]) # 각 행을 순차적으로 .csv 파일에 저장
+
+SRC = Input
+TRG = Output
+
+
+def code_create(src):
+    
+  src=src.split(" ")
+  translation, attention = translate_sentence(src, SRC, TRG, model, device)
+
+  print(f'predicted trg: \n')
+  # print(translation)
+  print(untokenize(translation[:-1]).decode('utf-8'))
+  f = open('ai.txt', 'w', encoding='utf-8')
+
+  f.write(untokenize(translation[:-1]).decode('utf-8'))
+
+import gradio as gr
+from translate import Translator
+def listToString(str_list):
+    
+    result = ""
+
+    for s in str_list:
+
+        result += s + ""
+
+    return result.strip()
+
+def code_generation(text):
+    from translate import Translator
+    translator = Translator(from_lang="ko", to_lang="en")
+
+    translation = translator.translate(text)
+
+    src = translation
+
+    
+    code_create(src)
+
+    f2 = open('ai.txt', 'r', encoding='utf-8')
+    f3 = f2.readlines()
+
+    f4 = listToString(f3)
+    src2 = f4
+    image = src2
+
+    return image
+    
+    
+
+    
+
+
+
+
+
+def improve_self_model(text):
+    f = open('feedback.txt', 'a', encoding = 'utf-8')
+    
+    from translate import Translator
+
+    translator = Translator(from_lang="ko", to_lang="en")
+
+    translation = translator.translate(text)
+
+    translation
+    f.write(translation)
+    f.write('\n')
+    
+    return text, '\n', 'Thank you for your feedback'
+
+f = open("n_epochs.txt", 'r', encoding='utf-8')
+N_EPOCHS = listToString(f.readlines())
+N_EPOCHS = int(N_EPOCHS)
+model.load_state_dict(torch.load('code_create_model.pt'))
+
+
+
+
+
+
+while True:
+
+    text = input("명령을 입력해주세요 : ")
+    
+        
+
+    if text == "end" :
+        break
+        
+        
+    else:
+        
+    
+        src = text
+        
+        
+        code_create(src)
+        '''from improve_model import improve_model
+        from check_model import check'''
+        
+        f2 = open('ai.txt', 'r', encoding='utf-8')
+
+        f3 = f2.readlines()
+
+
+
+        f4 = listToString(f3)
+
+        src2 = f4
+        code = src2
+        print(code)
+        src3 = len(code)
+        print(src3)
+        correct = ""
+        human = ""
+        correct = ""
+        create = ""
+        put = input("평가를 시작하시겠습니까? : ")
+        if "start" in put:
+            if src3 >= 7 :
+                file_lines = listToString(file_lines)
+                
+
+
+                if code in file_lines:
+                    print("correct program")
+                    correct = "correct"
+                    #correct = "wrong"
+                    human = None
+                    create = "wrong"
+                    name_list = [[src, code, correct, human, correct, create]]
+                    csv_writer2(now, name_list)
+
+                else:
+                    print("사용자의 추가확인(2차확인)이 필요합니다 현재 1차확인은 실패하였습니다")
+                    check1, check2, check3, check4, check5 = input("데이터와 일치함, 맞춤법 올바름, 문법맞음, 띄어쓰기올바름, 명령취지맞음 : ").split(',')
+
+
+                    if "정답" in check1:
+
+                        correct = "correct"
+                        human = "correct"
+                        create = "wrong"
+                        f = open("correct.txt", 'w', encoding='utf-8')
+                        f.write(correct)
+                        f.close()
+                        f = open("human.txt", 'w', encoding='utf-8')
+                        f.write(human)
+                        f.close()
+                        f = open("create.txt", 'w', encoding='utf-8')
+                        f.write(create)
+                        f.close()
+                        name_list = [[src, code, correct, human, correct, create]]
+                        csv_writer2(now, name_list)
+
+                        #csv파일에 정답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+                        print("최종 확인 결과 정답으로 판단되었습니다")
+                    elif "오답" in check1:
+                        #csv파일에 오답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+
+                        f = open("check.py", "w", encoding='utf-8')
+                        f.write(code)
+                        f.close()
+                        import time
+                        time.sleep(30)
+                        import check
+                        # 나중에는 인공지능이 스스로 오류여부나 오답여부 등등을 인간에 판단데이터들을 바탕으로 직접 판단할수있게 만들기
+
+                        correct = "wrong"
+                        human = "wrong"
+                        f = open("correct.txt", 'w', encoding='utf-8')
+                        f.write(correct)
+                        f.close()
+                        f = open("human.txt", 'w', encoding='utf-8')
+                        f.write(human)
+                        f.close()
+                        a = input("창조된 코드인가요? : ")
+                        b = 0
+                        if "yes" in a:
+                            b += 1
+                            b = str(b)
+                            f = open('create_epoch' + b + '.txt', 'w', encoding='utf-8')
+                            f.write(str(N_EPOCHS))
+                            f.close()
+                            create = 'correct'
+                            name_list = [[src, code, correct, human, correct, create]]
+                            csv_writer2(now, name_list)
+                            f = open("create.txt", 'w', encoding='utf-8')
+                            f.write(create)
+                            f.close()
+                            print("최종 확인 결과 오답으로 판단되었습니다")
+                            print("오답인 코드이지만 창조된 코드입니다")
+                            
+                        elif "no" in a:
+                            create = 'wrong'
+                            name_list = [[src, code, correct, human, correct, create]]
+                            csv_writer2(now, name_list)
+                            f = open("create.txt", 'w', encoding='utf-8')
+                            f.write(create)
+                            f.close()
+                            print("최종 확인 결과 오답으로 판단되었습니다")
+                            print("오답인 코드의 오류 여부와 문제여부등을 확인하겠습니다(창조되지않음)")
+                            
+                    if "정답" in check2:
+    
+                        correct = "wrong"
+                        human = "correct"
+                        create = "wrong"
+                        word = "correct"
+                        
+                        f = open("word.txt", 'w', encoding='utf-8')
+                        f.write(word)
+                        f.close()
+                        #csv파일에 정답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+                        
+                    elif "오답" in check2:
+                        word = "wrong"
+                        f = open("word.txt", 'w', encoding='utf-8')
+                        f.write(word)
+                        f.close()
+                    if "정답" in check3:
+                        grammar = "correct"
+                        
+                        f = open("grammar.txt", 'w', encoding='utf-8')
+                        f.write(grammar)
+                        f.close()
+                        #csv파일에 정답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+                        
+                    elif "오답" in check3:
+                        grammar = "wrong"
+                        f = open("grammar.txt", 'w', encoding='utf-8')
+                        f.write(grammar)
+                        f.close()
+                    if "정답" in check4:
+                        jump = "correct"
+                        
+                        f = open("jump.txt", 'w', encoding='utf-8')
+                        f.write(jump)
+                        f.close()
+                        #csv파일에 정답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+                        
+                    elif "오답" in check4:
+                        jump = "wrong"
+                        f = open("jump.txt", 'w', encoding='utf-8')
+                        f.write(jump)
+                        f.close()
+                    if "정답" in check5:
+        
+                        com = "correct"#명령취지맞는지 확인
+                        f = open("com.txt", 'w', encoding='utf-8')
+                        f.write(com)
+                        f.close()
+                        #csv파일에 정답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+                        
+                    elif "오답" in check5:
+                        com = "wrong"
+                        f = open("com.txt", 'w', encoding='utf-8')
+                        f.write(com)
+                        f.close()
+                #judgment data.csv에서 할일 수행
+
+            else:
+                print("code is not code")
+            
+
+            print(src, 
+            code, 
+            correct, 
+            human, 
+            correct, 
+            create)
+            f = open("create.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            t = 0
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("correct.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+            
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("word.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("human.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("grammar.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("com.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("jump.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            
+            else:
+                t += 0
+                print(t)
+
+
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+            print(t)
+
+            accuracy = str(7 / t)
+            print(accuracy)
+
+            print("정확률은 " + accuracy + " 입니다")
+            f = open('accuracy.txt', 'w', encoding='utf-8')
+            f.write(accuracy)
+            f.close()
+            name_list = [[src, code, correct, human, correct, create, word, grammar, com, jump]]
+            csv_writer2(now, name_list)
+
+            src2 = input("사용 소감 : ")
+
+            if "bad program" in src2:
+                #learn(N_EPOCHS = 2) 처음에 이미 두번 학습함
+                
+                N_EPOCHS *= N_EPOCHS
+                learn(N_EPOCHS)
+                f = open("n_epochs.txt", 'w', encoding='utf-8')
+                f.write(str(N_EPOCHS))
+                f.close()
+            elif "good program" in src2:
+                print(str(N_EPOCHS) + "는 창조능력을 발휘할수있는 epoch수 입니다")
+                f = open("cr_ep.txt", 'w', encoding='utf-8')
+                f.write(str(N_EPOCHS))
+                f.close()
+                f = open("n_epochs.txt", 'w', encoding='utf-8')
+                f.write(str(N_EPOCHS))
+                f.close()
+
+        import re
+        import sys
+        from inspect import getframeinfo, stack
+        from pprint import pformat
+
+        def replace_me(value, as_comment=False):
+            """
+            ** ATTENTION **
+            CALLING THIS FUNCTION WILL MODIFY YOUR SOURCE CODE. KEEP BACKUPS.
+            Replaces the current souce code line with the given `value`, while keeping
+            the indentation level. If `as_comment` is True, then `value` is inserted
+            as a Python comment and pretty-printed.
+            Because inserting multi-line values changes the following line numbers,
+            don't mix multiple calls to `replace_me` with multi-line values.
+            """
+            caller = getframeinfo(stack()[1][0])
+            if caller.filename == '<stdin>':
+                raise ValueError("Can't use `replace_me` module in interactive interpreter.")
+
+            with open(caller.filename, 'r+', encoding='utf-8') as f:
+                lines = f.read().split('\n')
+                spaces, = re.match(r'^(\s*)', lines[caller.lineno-1]).groups()
+
+                if as_comment:
+                    if not isinstance(value, str):
+                        value = pformat(value, indent=4)
+                    value_lines = value.rstrip().split('\n')
+                    value_lines = (spaces + '# ' + l for l in value_lines)
+                else:
+                    value_lines = (spaces + l for l in str(value).split('\n'))
+
+                lines[caller.lineno-1] = '\n'.join(value_lines)
+
+                f.seek(0)
+                f.truncate()
+                f.write('\n'.join(lines))
+
+        def insert_comment(comment):
+            """
+            ** ATTENTION **
+            CALLING THIS FUNCTION WILL MODIFY YOUR SOURCE CODE. KEEP BACKUPS.
+            Inserts a Python comment in the next source code line. If a comment alraedy
+            exists, it'll be replaced. The current indentation level will be maintained,
+            multi-line values will be inserted as multiple comments, and non-str values
+            will be pretty-printed.
+            Because inserting multi-line comments changes the following line numbers,
+            don't mix multiple calls to `insert_comment` with multi-line comments.
+            """
+            caller = getframeinfo(stack()[1][0])
+            if caller.filename == '<stdin>':
+                raise ValueError("Can't use `replace_me` module in interactive interpreter.")
+                
+            line_number = caller.lineno-1
+            comment_line = line_number + 1
+            with open(caller.filename, 'r+', encoding='utf-8') as f:
+                lines = f.read().split('\n')
+                spaces, = re.match(r'^(\s*)', lines[line_number]).groups()
+
+                while comment_line < len(lines) and lines[comment_line].startswith(spaces + '#'):
+                    lines.pop(comment_line)
+
+                if not isinstance(comment, str):
+                    comment = pformat(comment, indent=4)
+
+                comment_lines = [spaces + '# ' + l for l in comment.rstrip().split('\n')]
+                lines = lines[:comment_line] + comment_lines + lines[comment_line:]
+
+                f.seek(0)
+                f.truncate()
+                f.write('\n'.join(lines))
+
+        NONE = {}
+        def test(value, expected=NONE):
+            """
+            ** ATTENTION **
+            CALLING THIS FUNCTION WILL MODIFY YOUR SOURCE CODE. KEEP BACKUPS.
+            If `expected` is not given, replaces with current line with an equality
+            assertion. This is useful when manually testing side-effect-free code to
+            automatically create automated tests.
+            """
+            if hasattr(value, '__next__'):
+                value = list(value)
+                
+            if expected is not NONE:
+                try:
+                    assert value == expected
+                except AssertionError:
+                    print('TEST FAILED: expected\n{}\ngot\n{}\n'.format(repr(expected), repr(value)))
+                    raise
+                return value
+
+            caller = getframeinfo(stack()[1][0])
+            if caller.filename == '<stdin>':
+                raise ValueError("Can't use `replace_me` module in interactive interpreter.")
+                
+            line_number = caller.lineno-1
+            with open(caller.filename, 'r+', encoding='utf-8') as f:
+                lines = f.read().split('\n')
+                spaces, rest = re.match(r'^(\s*)(.+\))', lines[line_number]).groups()
+                lines[line_number] = spaces + rest[:-1] + ', {})'.format(repr(value))
+                f.seek(0)
+                f.truncate()
+                f.write('\n'.join(lines))
+
+            return value
+
+        def hardcode_me(value):
+            """
+            ** ATTENTION **
+            CALLING THIS FUNCTION WILL MODIFY YOUR SOURCE CODE. KEEP BACKUPS.
+            Replaces the call to this functions with the hardcoded representation of
+            the given. Limitations: must use the function "hardcode_me" and the call
+            must be a single line.
+                assert hardcode_me(1+1) == 2
+            becomes
+                assert 2 == 2
+            This code does a string replacement in a very naive way, so don't try
+            tricky situations (e.g. having a string containing "hardcode_me()" in the
+            same line).
+            """
+            import re
+
+            caller = getframeinfo(stack()[1][0])
+            if caller.filename == '<stdin>':
+                raise ValueError("Can't use `replace_me` module in interactive interpreter.")
+            if len(caller.code_context) != 1 or 'hardcode_me' not in caller.code_context[0]:
+                raise ValueError("Can only hardcode single-line calls that use the name 'hardcode_me'.")
+
+            line_number = caller.lineno-1
+            with open(caller.filename, 'r+', encoding='utf-8') as f:
+                lines = f.read().split('\n')
+
+                line = lines[line_number]
+
+                def replace(match):
+                    # Our goal here is to replace everything inside the matching
+                    # parenthesis, while ignoring literal strings.
+                    parens = 1
+                    index = 0
+                    string = match.group(1)
+                    while parens:
+                        if string[index] == ')':
+                            parens -= 1
+                        elif string[index] == '(':
+                            parens += 1
+                        elif string[index] in '"\'':
+                            while index is not None:
+                                index = string.index(string[index], index+1)
+                                if string[index-1] != '\\':
+                                    # TODO: \\" breaks this
+                                    break
+                        if index is None or index >= len(string):
+                            raise ValueError('Found unbalaced parenthesis while trying to hardcode value. Did you use line breaks?')
+                        index += 1
+                    return repr(value) + string[index:]
+                modified_line = re.sub(r'(?:replace_me\.)?hardcode_me\((.+)', replace, line)
+
+                lines = lines[:line_number] + [modified_line] + lines[line_number+1:]
+                f.seek(0)
+                f.truncate()
+                f.write('\n'.join(lines))
+
+            return value
+
+        def listToString(str_list):
+            
+            result = ""
+
+            for s in str_list:
+
+                result += s + ""
+
+            return result.strip()
+        import random
+        answer_way1 = 'Set the batch size and learning rate (learning rate) at the same time to set the learning rate to 0.1, continuously increasing by 0.1, and increase the batch size by 2, starting with 1.'
+
+        answer_way2 = 'Set the batch size and learning rate at the same time, set the learning rate to 0.9 and continue to decrease by 0.1, and the batch size to start at 128 and decrease by 2 to achieve a small batch size and low learning rate.'
+
+        answer_way3 = 'Add an activation function and add 4 each to compare the performance Write code that uses the best activation function'
+        answer_waylist = []
+        answer_waylist.append(answer_way1)
+        answer_waylist.append(answer_way2)
+        answer_waylist.append(answer_way3)
+        answer_way = random.choice(answer_waylist)
+        try:
+            import data_augmentation
+            f3 = data_augmentation.data_augmentation.f3
+            a = 3
+            for i in range(f3):
+                a += 1
+                num = str(a)
+            num = num
+        except:
+            pass
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        try:
+            from data_augmentation import data_augmentation
+            data_augmentation()
+        except:
+            pass
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        import self_improve
+        
+        import random
+        Stemmer = PorterStemmer()
+
+        def tokenize(sentence):
+            return nltk.word_tokenize(sentence)
+        def stem(word):
+            return Stemmer.stem(word.lower())
+        def bag_of_words(tokenized_sentence, words):
+            sentence_word = [stem(word) for word in tokenized_sentence]
+            bag = np.zeros(len(words), dtype=np.float32)
+            for idx, w in enumerate(words):
+                if w in sentence_word:
+                    bag[idx] = 1
+            return bag    
+
+        #두번째와세번째에중간인 데이터부분E:/오류수정 ai datasets.json
+        with open("오류수정 ai datasets.json", encoding='utf-8', errors='ignore') as json_data:
+            intents = json.load(json_data, strict=False)
+
+
+        all_words = []
+        tags = []
+        xy = []
+
+
+
+
+
+        for intent in intents['intents']:
+            tag = intent['tag']
+            tags.append(tag)
+            for pattern in intent['patterns']:
+                print(pattern)
+                w = tokenize(pattern)
+                all_words.extend(w)
+                xy.append((w,tag))
+        # 프로그램 개선 작업 
+        import webbrowser
+        from subprocess import PIPE, Popen
+
+        import requests
+
+        # We are going to write code to read and run python
+        # file, and store its output or error.
+        def execute_return(cmd):
+            args = cmd.split()
+            proc = Popen(args, stdout=PIPE, stderr=PIPE)
+            out, err = proc.communicate()
+            return out, err
+
+        # This function will make an HTTP request using StackOverflow
+        # API and the error we get from the 1st function and finally
+        # returns the JSON file.
+        def mak_req(error):
+            resp = requests.get("https://api.stackexchange.com/" +
+                                "/2.2/search?order=desc&tagged=python&sort=activity&intitle={}&site=stackoverflow".format(error))
+            return resp.json()
+
+        # This function takes the JSON from the 2nd function, and
+        # fetches and stores the URLs of those solutions which are
+        # marked as "answered" by StackOverflow. And then finally
+        # open up the tabs containing answers from StackOverflow on
+        # the browser.
+        def get_urls(json_dict):
+            url_list = []
+            count = 0
+
+            for i in json_dict['items']:
+                if i['is_answered']:
+                    url_list.append(i["link"])
+                count += 1
+                if count == 3 or count == len(i):
+                    break
+
+            for i in url_list:
+                webbrowser.open(i)
+
+
+        # Below line will go through the provided python file
+        # And stores the output and error.
+        out, err = execute_return("python storm(remake).py")
+
+        # This line is used to store that part of error we are interested in.
+        erro = err.decode("utf-8").strip().split("\r\n")[-1]
+        print(erro)
+
+
+        # A simple if condition, if error is found then execute 2nd and
+        # 3rd function, otherwise print "No error".
+        if erro:
+            filter_error = erro.split(":")
+            json1 = mak_req(filter_error[0])
+            json2 = mak_req(filter_error[1])
+            json = mak_req(erro)
+            get_urls(json1)
+            get_urls(json2)
+            get_urls(json)
+
+        else:
+            print("No error")
+        #오류 검사 및 수정 
+        query = erro #myCommand();
+        query = query.lower()
+        import random
+        reply = random.choice(intent["responses"])
+
+        print((1,5000) in query)
+        error = (1,5000) in query
+        #reply = "에러가 발생한 줄을 이포크 50으로 바꿔라"
+
+        with open("storm(remake).py", 'r', encoding='utf-8') as f:
+            data = f.readlines()[error]
+            f.truncate()[error]
+            print("제가 에러가난줄을 삭제해뒀습니다 제가알려드리는 에러 해결방법에 따라 에러를 해결해주세요")
+            print(reply)
+            
+
+
+
+
+
+
+
+import time
+end = time.time()
+
+print(f"{end - start:.5f} sec")
+sec = (f"{end - start:.0f}")
+print(sec)
+
+f = open('time.txt', 'w', encoding='utf-8')
+f.write(sec)
+#56 write a  program to find HCF
+
+def hcf(x, y):  
+   if x > y:  
+       smaller = y  
+   else:  
+       smaller = x  
+   for i in range(1,smaller + 1):  
+       if((x % i == 0) and (y % i == 0)):  
+           hcf = i  
+   return hcf  
+  
+num1 = int(input("Enter first number: "))  
+num2 = int(input("Enter second number: "))  
+print("The H.C.F. of", num1,"and", num2,"is", hcf(num1, num2))  
+
+#57 write a  program to convert decimal to binary, octal and hexadecimal
+dec = int(input("Enter a decimal number: "))  
+  
+print(bin(dec),"in binary.")  
+print(oct(dec),"in octal.")  
+print(hex(dec),"in hexadecimal."  
+
+#58 python program to find ascii value of a character
+
+c = input("Enter a character: ")  
+print("The ASCII value of '" + c + "' is",ord(c))
+
+#59 write a program to make a simple calculator
+
+# define functions  
+def add(x, y):  
+   """This function adds two numbers"""
+   return x + y 
+def subtract(x, y): 
+   """This function subtracts two numbers""" 
+   return x - y 
+def multiply(x, y): 
+   """This function multiplies two numbers""" 
+   return x * y 
+def divide(x, y): 
+   """This function divides two numbers"""  
+   return x / y  
+# take input from the user  
+print("Select operation.")  
+print("1.Add")  
+print("2.Subtract")  
+print("3.Multiply")  
+print("4.Divide")  
+  
+choice = input("Enter choice(1/2/3/4):")  
+  
+num1 = int(input("Enter first number: "))  
+num2 = int(input("Enter second number: "))  
+  
+if choice == '1':  
+   print(num1,"+",num2,"=", add(num1,num2))  
+  
+elif choice == '2':  
+   print(num1,"-",num2,"=", subtract(num1,num2))  
+  
+elif choice == '3':  
+   print(num1,"*",num2,"=", multiply(num1,num2))  
+elif choice == '4':  
+   print(num1,"/",num2,"=", divide(num1,num2))  
+else:  
+   print("Invalid input")    
+   
+#60 write a  program to sort words in alphabetic order
+
+my_str = input("Enter a string: ")  
+# breakdown the string into a list of words  
+words = my_str.split()  
+# sort the list  
+words.sort()  
+# display the sorted words  
+for word in words:  
+   print(word)  
+   
+#61 write a program to print the elements of an array present on even position
+arr = [1, 2, 3, 4, 5];     
+     
+print("Elements of given array present on even position: ");    
+    
+for i in range(1, len(arr), 2):    
+    print(arr[i]);   
+    
+#62 write a program to sort the elements of the array
+
+arr = [5, 2, 8, 7, 1];     
+temp = 0;    
+print("Elements of original array: ");    
+for i in range(0, len(arr)):    
+    print(arr[i], end=" ");    
+     
+for i in range(0, len(arr)):    
+    for j in range(i+1, len(arr)):    
+        if(arr[i] > arr[j]):    
+            temp = arr[i];    
+            arr[i] = arr[j];    
+            arr[j] = temp;    
+     
+print();    
+     
+print("Elements of array sorted in ascending order: ");    
+for i in range(0, len(arr)):    
+    print(arr[i], end=" ");   
+    
+#63 write a program to check if the given number is a disarium number
+
+def calculateLength(n):    
+    length = 0;    
+    while(n != 0):    
+        length = length + 1;    
+        n = n//10;    
+    return length;    
+     
+num = 175;    
+rem = sum = 0;    
+len = calculateLength(num);    
+     
+n = num;    
+     
+while(num > 0):    
+    rem = num%10;    
+    sum = sum + int(rem**len);    
+    num = num//10;    
+    len = len - 1;    
+     
+if(sum == n):    
+    print(str(n) + " is a disarium number");    
+else:    
+    print(str(n) + " is not a disarium number");   
+    
+#64 write a program to print all disarium numbers between 1 and 100
+
+def calculateLength(n):    
+    length = 0;    
+    while(n != 0):    
+        length = length + 1;    
+        n = n//10;    
+    return length;    
+   
+def sumOfDigits(num):    
+    rem = sum = 0;    
+    len = calculateLength(num);    
+        
+    while(num > 0):    
+        rem = num%10;    
+        sum = sum + (rem**len);    
+        num = num//10;    
+        len = len - 1;    
+    return sum;    
+      
+result = 0;    
+     
+print("Disarium numbers between 1 and 100 are");    
+for i in range(1, 101):    
+    result = sumOfDigits(i);    
+        
+    if(result == i):    
+        print(i),  
+        
+#65 write a program to add two matrices using nested loop
+
+X = [[12,7,3],
+    [4 ,5,6],
+    [7 ,8,9]]
+
+Y = [[5,8,1],
+    [6,7,3],
+    [4,5,9]]
+
+result = [[0,0,0],
+         [0,0,0],
+         [0,0,0]]
+
+# iterate through rows
+for i in range(len(X)):
+   # iterate through columns
+   for j in range(len(X[0])):
+       result[i][j] = X[i][j] + Y[i][j]
+
+for r in result:
+   print(r)  
+
+#66 write a program to transpose a matrix using a nested loop
+
+X = [[12,7],
+    [4 ,5],
+    [3 ,8]]
+
+result = [[0,0,0],
+         [0,0,0]]
+
+# iterate through rows
+for i in range(len(X)):
+   # iterate through columns
+   for j in range(len(X[0])):
+       result[j][i] = X[i][j]
+
+for r in result:
+   print(r)  
+
+#67 write a program to multiply two matrices using nested loops
+
+
+X = [[12,7,3],
+    [4 ,5,6],
+    [7 ,8,9]]
+
+Y = [[5,8,1,2],
+    [6,7,3,0],
+    [4,5,9,1]]
+
+result = [[0,0,0,0],
+         [0,0,0,0],
+         [0,0,0,0]]
+
+
+for i in range(len(X)):
+
+   for j in range(len(Y[0])):
+
+       for k in range(len(Y)):
+           result[i][j] += X[i][k] * Y[k][j]
+
+for r in result:
+   print(r)   
+   
+#68 write a program to remove punctuation from a string 
+
+punctuations = '''!()-[]{};:'"\,<>./?@#$%^&*_~'''
+
+my_str = "Hello!!!, he said ---and went."
+
+no_punct = ""
+for char in my_str:
+   if char not in punctuations:
+       no_punct = no_punct + char
+
+print(no_punct)
+
+#69 write a program to shuffle a deck of card
+
+import itertools, random
+
+deck = list(itertools.product(range(1,14),['Spade','Heart','Diamond','Club']))
+random.shuffle(deck)
+
+print("You got:")
+for i in range(5):
+   print(deck[i][0], "of", deck[i][1])
+   
+#70 write a program to display the powers of 2 using anonymous function
+
+terms = 10
+result = list(map(lambda x: 2 ** x, range(terms)))
+
+print("The total terms are:",terms)
+for i in range(terms):
+   print("2 raised to power",i,"is",result[i])
+
+#71 write a program to add 2 binary numbers
+
+num1 = '00001'
+num2 = '10001'
+
+sum = bin(int(num1,2) + int(num2,2))
+print(sum)
+
+#71 write a program to find simple interest 
+
+p = float(input("Enter the principle amount : "))
+r = float(input("Enter the rate of interest : "))
+t = float(input("Enter the time in the years: "))
+
+# calculating simple interest
+si = (p*r*t)/100
+
+# printing the values
+print("Principle amount: ", p)
+print("Interest rate   : ", r)
+print("Time in years   : ", t)
+print("Simple Interest : ", si)
+
+#72 write a program to find compound interest 
+
+p = float(input("Enter the principle amount : "))
+r = float(input("Enter the rate of interest : "))
+t = float(input("Enter the time in the years: "))
+
+# calculating compound interest
+ci =  p * (pow((1 + r / 100), t)) 
+
+# printing the values
+print("Principle amount  : ", p)
+print("Interest rate     : ", r)
+print("Time in years     : ", t)
+print("compound Interest : ", ci)
+
+#73 write a program to print a pattern of stars (*)
+
+for row in range (0,5):
+    for column in range (0, row+1):
+        print ("*", end="")
+
+    # ending row
+    print('\r')
+    
+#74 write a program to return the absolute value in Python
+
+def get_absolute_value(n):
+	if n >= 0:
+		return n
+	else:
+		return -n
+
+print(get_absolute_value(101))
+
+#75 write a program to find the power of a number
+
+a = 10
+b = 3
+
+result = a**b
+
+print (a, " to the power of ", b, " is = ", result)
+
+#76 write a program to print the binary value of the numbers from 1 to N
+
+n = int(input("Enter the value of N: "))
+
+for i in range(1, n+1):
+    print("Binary value of ", i, " is: ", bin(i))
+    
+#77 write a program to find number of bits necessary to represent an integer in binary
+
+num = int(input("Enter an integer number: "))
+
+bits = num.bit_length()
+
+print("bits required to store ", num, " = ", bits)
+print("binary value of ", num, " is = ", bin(num))
+
+#78 write a program to find the difference between 2 lists
+
+list1 = [10, 20, 30, 40, 50]
+list2 = [10, 20, 30, 60, 70]
+
+print "list1:", list1
+print "list2:", list2
+
+print "Difference elements:"
+print (list (set(list1) - set (list2)))
+
+#79 write a program to add an element at specified index in a list
+
+list = [10, 20, 30]
+print (list)
+list.insert (1, "ABC")
+print (list)
+list.insert (3, "PQR")
+print (list)
+
+#80 write a program to print EVEN length words of a string 
+str = "Python is a programming language"
+
+words = list(str.split(' '))
+
+print "str: ", str
+print "list converted string: ", words
+print "EVEN length words:"
+for W in words:
+	if(len(W)%2==0 ):
+		print W
+        
+#81 write a program to create N copies of a given string 
+
+str1 = "Hello"
+n = 3
+
+str2 = str1 * 3 
+
+print "str1: ", str1 
+print "str2: ", str2
+
+#82 write a program to extract the mobile number from the given string in Python
+
+# importing the module
+import re
+
+# string
+string='''hello you can call me at 018002089898.'''
+
+# extracting the mobile number
+Phonenumber=re.compile(r'\d\d\d\d\d\d\d\d\d\d\d\d')
+m=Phonenumber.search(string)
+
+# printing the result 
+print('mobile number found from the string : ',m.group())
+
+#83 write a program to Capitalizes the first letter of each word in a string
+
+def capitalize(text):
+  return text.title()
+
+str1 = "Hello world!"
+str2 = "hello world!"
+str3 = "HELLO WORLD!"
+str4 = "includehelp.com is a tutorials site"
+
+print("str1: ", str1)
+print("str2: ", str2)
+print("str3: ", str3)
+print("str4: ", str4)
+print()
+
+#84 write a program to design a dice throw function
+
+import random
+
+def dice():
+    return random.choice([1,2,3,4,5,6])
+    
+#85 write a program to print perfect numbers from the given list of integers
+
+def checkPerfectNum(n) :
+	i = 2;sum = 1;
+
+	while(i <= n//2 ) :
+		if (n % i == 0) :
+			sum += i			
+		
+		i += 1
+		if sum == n :
+			print(n,end=' ')
+
+if __name__ == "__main__" :
+
+	print("Enter list of integers: ")
+	list_of_intgers = list(map(int,input().split()))
+
+	print("Given list of integers:",list_of_intgers)
+
+	print("Perfect numbers present in the list is: ")
+	for num in list_of_intgers :
+		checkPerfectNum(num)
+        
+#86 write a program to convert meters into yards
+num = float(input("Enter the distance measured in centimeter : "))
+
+inc = num/2.54 
+print("Distance in inch : ", inc)
+
+#87 write a program Tower of Hanoi 
+
+def hanoi(x):
+    global repN
+    repN += 1
+    if x == 1:
+        return 2
+    
+    else:
+        return 3*hanoi(x-1) + 2
+    
+x = int(input("ENTER THE NUMBER OF DISKS: "))
+
+global repN
+repN =0
+
+print('NUMBER OF STEPS: ', hanoi(x), ' :', repN)
+
+#88 write a program to find variance of a dataset
+
+def variance(X):
+    mean = sum(X)/len(X)
+    tot = 0.0
+    for x in X:
+        tot = tot + (x - mean)**2
+    return tot/len(X)
+
+# main code
+#  a simple data-set 
+sample = [1, 2, 3, 4, 5] 
+print("variance of the sample is: ", variance(sample))
+
+#89 write a program to find winner of the day
+
+def find_winner_of_the_day(*match_tuple):
+    team1_count = 0
+    team2_count = 0
+     
+    for team_name in match_tuple :
+         
+        if team_name == "Team1" :
+            team1_count += 1
+        else :
+            team2_count += 1
+             
+    if team1_count == team2_count :
+        return "Tie"
+         
+    elif team1_count > team2_count :
+        return "Team1"
+     
+    else :
+        return "Team2"
+     
+     
+if __name__ == "__main__" :
+     
+    print(find_winner_of_the_day("Team1","Team2","Team1"))
+    print(find_winner_of_the_day("Team1","Team2","Team1","Team2"))
+    print(find_winner_of_the_day("Team1","Team2","Team2","Team1","Team2"))
+    
+#90 write a program for swapping the value of two integers without third variable
+
+x = int(input("Enter the value of x :"))
+y = int(input("Enter the value of y :"))
+
+(x,y) = (y,x)
+
+print('Value of x: ', x, '\nValue of y: ', y, '\nWOO!! Values SWAPPEDDD')
+
+#91 write a program to check eligibility for voting
+
+# input age
+age = int(input("Enter Age : "))
+
+if age>=18:
+        status="Eligible"
+else:
+    status="Not Eligible"
+
+print("You are ",status," for Vote.")
+
+#92 write a program to print the version information
+
+import sys
+
+print("Python version: ", sys.version)
+print("Python version info: ", sys.version_info)
+
+#93 write a program to find sum of all digits of a number
+
+def sumDigits(num):
+  if num == 0:
+    return 0
+  else:
+    return num % 10 + sumDigits(int(num / 10))
+
+x = 0
+print("Number: ", x)
+print("Sum of digits: ", sumDigits(x))
+print()
+
+#94 write a program to print double quotes with the string variable
+str1 = "Hello world";
+
+print("\"%s\"" % str1)
+print('"%s"' % str1)
+print('"{}"'.format(str1))
+
+#95 write a program to Remove leading zeros from an IP address
+
+import re
+def removeLeadingZeros(ip):
+    modified_ip = re.sub(regex, '.', ip)
+    print(modified_ip)
+
+
+if __name__ == '__main__' : 
+	
+	ip = "216.08.094.196"
+	removeLeadingZeros(ip)
+
+#96 write a program for binary search
+
+def binary_search(l, num_find):
+
+    start = 0
+    end = len(l) - 1
+    mid = (start + end) // 2
+    
+    found = False
+    position = -1
+
+    while start <= end:
+        if l[mid] == num_find:
+            found = True
+            position = mid
+            break
+        
+        if num_find > l[mid]:
+            start = mid + 1
+            mid = (start + end) // 2
+        else:
+            end = mid - 1
+            mid = (start + end) // 2
+
+    return (found, position)
+
+if __name__=='__main__':
+    
+    l = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    num = 6
+    found = binary_search(l, num)
+    if found[0]:
+        print('Number %d found at position %d'%(num, found[1]+1))
+    else:
+        print('Number %d not found'%num)
+        
+#97 write a program to copy odd lines of one file to another file
+
+file1 = open('file1.txt', 'r') 
+file2 = open('file2.txt', 'w') 
+
+lines = file1.readlines() 
+type(lines) 
+for i in range(0, len(lines)): 
+	if(i % 2 != 0): 
+		file2.write(lines[i]) 
+
+file1.close()
+file2.close() 
+
+file1 = open('file1.txt', 'r') 
+file2 = open('file2.txt', 'r') 
+
+str1 = file1.read()
+str2 = file2.read()
+
+print("file1 content...")
+print(str1)
+
+print() # to print new line
+
+print("file2 content...")
+print(str2)
+
+file1.close()
+file2.close()
+
+#98 write a program to reverse a string that contains digits in Python
+
+def reverse(n):
+    s=str(n) 
+    p=s[::-1]
+    return p 
+
+num = int(input('Enter a positive value: '))
+print('The reverse integer:',reverse(num))
+
+#99 write a program to input a string and find total number uppercase and lowercase letters
+
+print("Input a string: ")
+str1 = input()
+
+no_of_ucase, no_of_lcase = 0,0
+
+for c in str1:
+    if c>='A' and c<='Z':
+        no_of_ucase += 1
+    if c>='a' and c<='z':
+        no_of_lcase += 1
+
+print("Input string is: ", str1)
+print("Total number of uppercase letters: ", no_of_ucase)
+print("Total number of lowercase letters: ", no_of_lcase)
+
+#100 write a program to input a string and find total number of letters and digits
+
+print("Input a string: ")
+str1 = input()
+
+no_of_letters, no_of_digits = 0,0
+
+for c in str1:
+    if (c>='a' and c<='z') or (c>='A' and c<='Z'):
+        no_of_letters += 1
+    if c>='0' and c<='9':
+        no_of_digits += 1
+
+print("Input string is: ", str1)
+print("Total number of letters: ", no_of_letters)
+print("Total number of digits: ", no_of_digits)
+
+# Write a python function to implement tower of hanoi
+
+def hanoi(disks, source, auxiliary, target):
+    if disks == 1:
+        print('Move disk 1 from peg {} to peg {}.'.format(source, target))
+        return
+ 
+    hanoi(disks - 1, source, target, auxiliary)
+    print('Move disk {} from peg {} to peg {}.'.format(disks, source, target))
+    hanoi(disks - 1, auxiliary, source, target)
+
+
+# Write a python program to implement a Stack using One Queue
+
+class Stack:
+    def __init__(self):
+        self.q = Queue()
+ 
+    def is_empty(self):
+        return self.q.is_empty()
+ 
+    def push(self, data):
+        self.q.enqueue(data)
+ 
+    def pop(self):
+        for _ in range(self.q.get_size() - 1):
+            dequeued = self.q.dequeue()
+            self.q.enqueue(dequeued)
+        return self.q.dequeue()
+ 
+ 
+class Queue:
+    def __init__(self):
+        self.items = []
+        self.size = 0
+ 
+    def is_empty(self):
+        return self.items == []
+ 
+    def enqueue(self, data):
+        self.size += 1
+        self.items.append(data)
+ 
+    def dequeue(self):
+        self.size -= 1
+        return self.items.pop(0)
+ 
+    def get_size(self):
+        return self.size
+ 
+ 
+s = Stack()
+ 
+print('Menu')
+print('push <value>')
+print('pop')
+print('quit')
+ 
+while True:
+    do = input('What would you like to do? ').split()
+ 
+    operation = do[0].strip().lower()
+    if operation == 'push':
+        s.push(int(do[1]))
+    elif operation == 'pop':
+        if s.is_empty():
+            print('Stack is empty.')
+        else:
+            print('Popped value: ', s.pop())
+    elif operation == 'quit':
+        break
+
+# Write a python program to implement Dequeue
+
+class Dequeue:
+    def __init__(self):
+        self.items = []
+ 
+    def is_empty(self):
+        return self.items == []
+ 
+    def append(self, data):
+        self.items.append(data)
+ 
+    def append_left(self, data):
+        self.items.insert(0, data)
+ 
+    def pop(self):
+        return self.items.pop()
+ 
+    def pop_left(self):
+        return self.items.pop(0)
+ 
+ 
+q = Dequeue()
+print('Menu')
+print('append <value>')
+print('appendleft <value>')
+print('pop')
+print('popleft')
+print('quit')
+ 
+while True:
+    do = input('What would you like to do? ').split()
+ 
+    operation = do[0].strip().lower()
+    if operation == 'append':
+        q.append(int(do[1]))
+    elif operation == 'appendleft':
+        q.append_left(int(do[1]))
+    elif operation == 'pop':
+        if q.is_empty():
+            print('Dequeue is empty.')
+        else:
+            print('Popped value from right: ', q.pop())
+    elif operation == 'popleft':
+        if q.is_empty():
+            print('Dequeue is empty.')
+        else:
+            print('Popped value from left: ', q.pop_left())
+    elif operation == 'quit':
+        break
+
+# Write a python program to Check and print if string is palindrome using Stack
+
+class Stack:
+    def __init__(self):
+        self.items = []
+ 
+    def is_empty(self):
+        return self.items == []
+ 
+    def push(self, data):
+        self.items.append(data)
+ 
+    def pop(self):
+        return self.items.pop()
+ 
+ 
+s = Stack()
+text = "ABA"
+ 
+for character in text:
+    s.push(character)
+ 
+reversed_text = ''
+while not s.is_empty():
+    reversed_text = reversed_text + s.pop()
+ 
+if text == reversed_text:
+    print('The string is a palindrome.')
+else:
+    print('The string is not a palindrome.')
+
+# Write a python program to Check and print if Expression is Correctly Parenthesized using Stack
+
+class Stack:
+    def __init__(self):
+        self.items = []
+ 
+    def is_empty(self):
+        return self.items == []
+ 
+    def push(self, data):
+        self.items.append(data)
+ 
+    def pop(self):
+        return self.items.pop()
+ 
+ 
+s = Stack()
+exp = "(x+y"
+ 
+for c in exp:
+    if c == '(':
+        s.push(1)
+    elif c == ')':
+        if s.is_empty():
+            is_balanced = False
+            break
+        s.pop()
+else:
+    if s.is_empty():
+        is_balanced = True
+    else:
+        is_balanced = False
+ 
+if is_balanced:
+    print('Expression is correctly parenthesized.')
+else:
+    print('Expression is not correctly parenthesized.')
+
+# Write a python program to Implement Linear Search and print the key element if found
+
+def linear_search(alist, key):
+    """Return index of key in alist. Return -1 if key not present."""
+    for i in range(len(alist)):
+        if alist[i] == key:
+            return i
+    return -1
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+
+key = 6
+ 
+index = linear_search(alist, key)
+if index < 0:
+    print(f'{key} was not found.')
+else:
+    print(f'{key} was found at index {index}.')
+
+# Write a python program to Implement Binary Search without Recursion and print the key element if found
+
+def binary_search(alist, key):
+    """Search key in alist[start... end - 1]."""
+    start = 0
+    end = len(alist)
+    while start < end:
+        mid = (start + end)//2
+        if alist[mid] > key:
+            end = mid
+        elif alist[mid] < key:
+            start = mid + 1
+        else:
+            return mid
+    return -1
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+
+key = 6
+ 
+index = binary_search(alist, key)
+if index < 0:
+    print(f'{key} was not found.')
+else:
+    print(f'{key} was found at index {index}.')
+
+
+# Write a python program to Implement Binary Search with Recursion and print the key element if found
+
+def binary_search_rec(alist, start, end, key):
+    """Search key in alist[start... end - 1]."""
+    if not start < end:
+        return -1
+ 
+    mid = (start + end)//2
+    if alist[mid] < key:
+        return binary_search_rec(alist, mid + 1, end, key)
+    elif alist[mid] > key:
+        return binary_search_rec(alist, start, mid, key)
+    else:
+        return mid
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+
+key = 6
+ 
+index = binary_search_rec(alist, 0, len(alist), key)
+if index < 0:
+    print(f'{key} was not found.')
+else:
+    print(f'{key} was found at index {index}.')
+
+
+# Write a python program to Implement Bubble sort and print the sorted list for the below list
+
+def bubble_sort(alist):
+    for i in range(len(alist) - 1, 0, -1):
+        no_swap = True
+        for j in range(0, i):
+            if alist[j + 1] < alist[j]:
+                alist[j], alist[j + 1] = alist[j + 1], alist[j]
+                no_swap = False
+        if no_swap:
+            return
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+bubble_sort(alist)
+print('Sorted list: ', end='')
+print(alist)
+
+# Write a python program to Implement Selection sort and print the sorted list for the below list
+
+def selection_sort(alist):
+    for i in range(0, len(alist) - 1):
+        smallest = i
+        for j in range(i + 1, len(alist)):
+            if alist[j] < alist[smallest]:
+                smallest = j
+        alist[i], alist[smallest] = alist[smallest], alist[i]
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+selection_sort(alist)
+print('Sorted list: ', end='')
+print(alist)
+
+# Write a python program to Implement Insertion sort and print the sorted list for the below list
+
+def insertion_sort(alist):
+    for i in range(1, len(alist)):
+        temp = alist[i]
+        j = i - 1
+        while (j >= 0 and temp < alist[j]):
+            alist[j + 1] = alist[j]
+            j = j - 1
+        alist[j + 1] = temp
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+insertion_sort(alist)
+print('Sorted list: ', end='')
+print(alist)
+
+# Write a python program to Implement Merge sort and print the sorted list for the below list
+
+def merge_sort(alist, start, end):
+    '''Sorts the list from indexes start to end - 1 inclusive.'''
+    if end - start > 1:
+        mid = (start + end)//2
+        merge_sort(alist, start, mid)
+        merge_sort(alist, mid, end)
+        merge_list(alist, start, mid, end)
+ 
+def merge_list(alist, start, mid, end):
+    left = alist[start:mid]
+    right = alist[mid:end]
+    k = start
+    i = 0
+    j = 0
+    while (start + i < mid and mid + j < end):
+        if (left[i] <= right[j]):
+            alist[k] = left[i]
+            i = i + 1
+        else:
+            alist[k] = right[j]
+            j = j + 1
+        k = k + 1
+    if start + i < mid:
+        while k < end:
+            alist[k] = left[i]
+            i = i + 1
+            k = k + 1
+    else:
+        while k < end:
+            alist[k] = right[j]
+            j = j + 1
+            k = k + 1
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+merge_sort(alist, 0, len(alist))
+print('Sorted list: ', end='')
+print(alist)
+
+# Write a python program to Implement Quicksort and print the sorted list for the below list
+
+def quicksort(alist, start, end):
+    '''Sorts the list from indexes start to end - 1 inclusive.'''
+    if end - start > 1:
+        p = partition(alist, start, end)
+        quicksort(alist, start, p)
+        quicksort(alist, p + 1, end)
+ 
+ 
+def partition(alist, start, end):
+    pivot = alist[start]
+    i = start + 1
+    j = end - 1
+ 
+    while True:
+        while (i <= j and alist[i] <= pivot):
+            i = i + 1
+        while (i <= j and alist[j] >= pivot):
+            j = j - 1
+ 
+        if i <= j:
+            alist[i], alist[j] = alist[j], alist[i]
+        else:
+            alist[start], alist[j] = alist[j], alist[start]
+            return j
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+quicksort(alist, 0, len(alist))
+print('Sorted list: ', end='')
+print(alist)
+
+# Write a python program to Implement Heapsort and print the sorted list for the below list
+
+def heapsort(alist):
+    build_max_heap(alist)
+    for i in range(len(alist) - 1, 0, -1):
+        alist[0], alist[i] = alist[i], alist[0]
+        max_heapify(alist, index=0, size=i)
+ 
+def parent(i):
+    return (i - 1)//2
+ 
+def left(i):
+    return 2*i + 1
+ 
+def right(i):
+    return 2*i + 2
+ 
+def build_max_heap(alist):
+    length = len(alist)
+    start = parent(length - 1)
+    while start >= 0:
+        max_heapify(alist, index=start, size=length)
+        start = start - 1
+ 
+def max_heapify(alist, index, size):
+    l = left(index)
+    r = right(index)
+    if (l < size and alist[l] > alist[index]):
+        largest = l
+    else:
+        largest = index
+    if (r < size and alist[r] > alist[largest]):
+        largest = r
+    if (largest != index):
+        alist[largest], alist[index] = alist[index], alist[largest]
+        max_heapify(alist, largest, size)
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+heapsort(alist)
+print('Sorted list: ', end='')
+print(alist)
+
+# Write a python program to Implement Counting sort and print the sorted list for the below list
+
+def counting_sort(alist, largest):
+    c = [0]*(largest + 1)
+    for i in range(len(alist)):
+        c[alist[i]] = c[alist[i]] + 1
+ 
+    c[0] = c[0] - 1 
+    for i in range(1, largest + 1):
+        c[i] = c[i] + c[i - 1]
+ 
+    result = [None]*len(alist)
+ 
+    for x in reversed(alist):
+        result[c[x]] = x
+        c[x] = c[x] - 1
+ 
+    return result
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+k = max(alist)
+sorted_list = counting_sort(alist, k)
+print('Sorted list: ', end='')
+print(sorted_list)
+
+# Write a python program to Implement Radix sort and print the sorted list for the below list
+
+def radix_sort(alist, base=10):
+    if alist == []:
+        return
+ 
+    def key_factory(digit, base):
+        def key(alist, index):
+            return ((alist[index]//(base**digit)) % base)
+        return key
+    largest = max(alist)
+    exp = 0
+    while base**exp <= largest:
+        alist = counting_sort(alist, base - 1, key_factory(exp, base))
+        exp = exp + 1
+    return alist
+ 
+def counting_sort(alist, largest, key):
+    c = [0]*(largest + 1)
+    for i in range(len(alist)):
+        c[key(alist, i)] = c[key(alist, i)] + 1
+ 
+    c[0] = c[0] - 1
+    for i in range(1, largest + 1):
+        c[i] = c[i] + c[i - 1]
+ 
+    result = [None]*len(alist)
+    for i in range(len(alist) - 1, -1, -1):
+        result[c[key(alist, i)]] = alist[i]
+        c[key(alist, i)] = c[key(alist, i)] - 1
+ 
+    return result
+ 
+alist = [2, 3, 5, 6, 4, 5]
+sorted_list = radix_sort(alist)
+print('Sorted list: ', end='')
+print(sorted_list)
+
+# Write a python program to Implement Bucket sort and print the sorted list for the below list
+
+def bucket_sort(alist):
+    largest = max(alist)
+    length = len(alist)
+    size = largest/length
+ 
+    buckets = [[] for _ in range(length)]
+    for i in range(length):
+        j = int(alist[i]/size)
+        if j != length:
+            buckets[j].append(alist[i])
+        else:
+            buckets[length - 1].append(alist[i])
+ 
+    for i in range(length):
+        insertion_sort(buckets[i])
+ 
+    result = []
+    for i in range(length):
+        result = result + buckets[i]
+ 
+    return result
+ 
+def insertion_sort(alist):
+    for i in range(1, len(alist)):
+        temp = alist[i]
+        j = i - 1
+        while (j >= 0 and temp < alist[j]):
+            alist[j + 1] = alist[j]
+            j = j - 1
+        alist[j + 1] = temp
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+sorted_list = bucket_sort(alist)
+print('Sorted list: ', end='')
+print(sorted_list)
+
+# Write a python program to Implement Gnome sort and print the sorted list for the below list
+
+def gnome_sort(alist):
+    for pos in range(1, len(alist)):
+        while (pos != 0 and alist[pos] < alist[pos - 1]):
+            alist[pos], alist[pos - 1] = alist[pos - 1], alist[pos]
+            pos = pos - 1
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+gnome_sort(alist)
+print('Sorted list: ', end='')
+print(alist)
+
+# Write a python program to Implement Cocktail Shaker sort and print the sorted list for the below list
+
+def cocktail_shaker_sort(alist):
+    def swap(i, j):
+        alist[i], alist[j] = alist[j], alist[i]
+ 
+    upper = len(alist) - 1
+    lower = 0
+ 
+    no_swap = False
+    while (not no_swap and upper - lower > 1):
+        no_swap = True
+        for j in range(lower, upper):
+            if alist[j + 1] < alist[j]:
+                swap(j + 1, j)
+                no_swap = False
+        upper = upper - 1
+ 
+        for j in range(upper, lower, -1):
+            if alist[j - 1] > alist[j]:
+                swap(j - 1, j)
+                no_swap = False
+        lower = lower + 1
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+cocktail_shaker_sort(alist)
+print('Sorted list: ', end='')
+print(alist)
+
+# Write a python program to Implement Comb sort and print the sorted list for the below list
+
+def comb_sort(alist):
+    def swap(i, j):
+        alist[i], alist[j] = alist[j], alist[i]
+ 
+    gap = len(alist)
+    shrink = 1.3
+ 
+    no_swap = False
+    while not no_swap:
+        gap = int(gap/shrink)
+ 
+        if gap < 1:
+            gap = 1
+            no_swap = True
+        else:
+            no_swap = False
+ 
+        i = 0
+        while i + gap < len(alist):
+            if alist[i] > alist[i + gap]:
+                swap(i, i + gap)
+                no_swap = False
+            i = i + 1
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+comb_sort(alist)
+print('Sorted list: ', end='')
+print(alist)
+
+# Write a python program to Implement Shell sort and print the sorted list for the below list
+
+def gaps(size):
+    length = size.bit_length()
+    for k in range(length - 1, 0, -1):
+        yield 2**k - 1
+ 
+ 
+def shell_sort(alist):
+    def insertion_sort_with_gap(gap):
+        for i in range(gap, len(alist)):
+            temp = alist[i]
+            j = i - gap
+            while (j >= 0 and temp < alist[j]):
+                alist[j + gap] = alist[j]
+                j = j - gap
+            alist[j + gap] = temp
+ 
+    for g in gaps(len(alist)):
+        insertion_sort_with_gap(g)
+ 
+ 
+alist = [2, 3, 5, 6, 4, 5]
+shell_sort(alist)
+print('Sorted list: ', end='')
+print(alist)
+
+# Write a python Class to calculate area of a rectangle and print the area
+
+class rectangle():
+    def __init__(self,breadth,length):
+        self.breadth=breadth
+        self.length=length
+    def area(self):
+        return self.breadth*self.length
+a=6
+b=4
+obj=rectangle(a,b)
+print("Area of rectangle:",obj.area())
+
+# Write a python Class to calculate area of a circle and print the vale for a radius
+
+class CircleArea():
+    def __init__(self,radius):
+        self.radius=radius
+    def area(self):
+        return 3.14 * self.radius * self.radius
+a=6
+obj=CircleArea(a)
+print("Area of rectangle:",obj.area())
+
+# Write a python Class to calculate Perimeter of a circle and print the vale for a radius
+
+class CirclePerimeter():
+    def __init__(self,radius):
+        self.radius=radius
+    def perimeter(self):
+        return 2 * 3.14 * self.radius
+a=6
+obj=CirclePerimeter(a)
+print("Perimeter of rectangle:",obj.perimeter())
+
+# Write a python Class to print All Possible Subsets from a Set of Distinct Integers
+
+class sub:  
+    def f1(self, s1):  
+        return self.f2([], sorted(s1))  
+ 
+    def f2(self, curr, s1):  
+        if s1:  
+            return self.f2(curr, s1[1:]) + self.f2(curr + [s1[0]], s1[1:])  
+        return [curr]  
+a=[2, 3, 5, 6, 4, 5]
+
+print("Subsets: ")
+print(sub().f1(a))
+
+# Write a python program to Read and print the Contents of a File
+
+a=str(input("Enter file name .txt extension:"))
+file2=open(a,'r')
+line=file2.readline()
+while(line!=""):
+    print(line)
+    line=file2.readline()
+file2.close()
+
+# Write a python program to Count and print the Number of Words in a Text File
+
+fname = input("Enter file name: ")
+ 
+num_words = 0
+ 
+with open(fname, 'r') as f:
+    for line in f:
+        words = line.split()
+        num_words += len(words)
+print("Number of words:")
+print(num_words)
+
+# Write a python program to Count the Number of Lines in a Text File
+
+fname = input("Enter file name: ")
+num_lines = 0
+with open(fname, 'r') as f:
+    for line in f:
+        num_lines += 1
+print("Number of lines:")
+print(num_lines)
+
+# Write a python program to Count the Occurrences of a Word in a Text File
+
+fname = input("Enter file name: ")
+word='the'
+k = 0
+ 
+with open(fname, 'r') as f:
+    for line in f:
+        words = line.split()
+        for i in words:
+            if(i==word):
+                k=k+1
+print(f"Frequency of Occurrences of the word {a} is:")
+print(k)
+
+# Write a python function to Copy the Contents of One File into Another
+
+def copy(from_file, to_file):
+    with open(from_file) as f:
+        with open(to_file, "w") as f1:
+            for line in f:
+                f1.write(line)
+
+# Write a python function that Counts the Number of Times a Certain Letter Appears in the Text File
+def count_letter(fname, l):
+    k = 0
+    with open(fname, 'r') as f:
+        for line in f:
+            words = line.split()
+            for i in words:
+                for letter in i:
+                    if(letter==l):
+                        k=k+1
+    return k
+
+# Write a python function that Print all the Numbers Present in the Text File
+
+def print_number(fname):
+    with open(fname, 'r') as f:
+        for line in f:
+            words = line.split()
+            for i in words:
+                for letter in i:
+                    if(letter.isdigit()):
+                        print(letter)
+
+
+# Write a python function that Counts the Number of Blank Spaces in a Text File
+
+def count_blank_space(fname):
+    k = 0
+    with open(fname, 'r') as f:
+        for line in f:
+            words = line.split()
+            for i in words:
+                for letter in i:
+                    if(letter.isspace):
+                        k=k+1
+    return k
+
+# Write a python function that Capitalize the First Letter of Every Word in the File
+
+def capitalize(fname):
+    with open(fname, 'r') as f:
+        for line in f:
+            l=line.title()
+            print(l)
+
+# Write a python function that prints the Contents of a File in Reverse Order
+
+def reverse_content(filename):
+    for line in reversed(list(open(filename))):
+        print(line.rstrip())
+
+# Write a python Program to Flatten and print a List
+
+a=[[1,[[2]],[[[3]]]],[[4],5]]
+flatten=lambda l: sum(map(flatten,l),[]) if isinstance(l,list) else [l]
+print(flatten(a))
+
+# Write a Python Program to print the LCM of Two Numbers
+
+def lcm(a,b):
+    lcm.multiple=lcm.multiple+b
+    if((lcm.multiple % a == 0) and (lcm.multiple % b == 0)):
+        return lcm.multiple
+    else:
+        lcm(a, b)
+    return lcm.multiple
+lcm.multiple=0
+a=4
+b=7
+if(a>b):
+    LCM=lcm(b,a)
+else:
+    LCM=lcm(a,b)
+
+print(LCM)
+
+# Write a Python function to print the GSD of Two Numbers
+
+def gcd(a,b):
+    if(b==0):
+        return a
+    else:
+        return gcd(b,a%b)
+
+
+# Write a Python function to Find if a Number is Prime or Not Prime
+
+def check(n, div = None):
+    if div is None:
+        div = n - 1
+    while div >= 2:
+        if n % div == 0:
+            print("Number not prime")
+            return False
+        else:
+            return check(n, div-1)
+    else:
+        print("Number is prime")
+        return 'True'
+
+# Write a Python function to Find the Power of a Number Using Recursion
+
+def power(base,exp):
+    if(exp==1):
+        return(base)
+    if(exp!=1):
+        return(base*power(base,exp-1))
+
+# Write a Python function to Find the Total Sum of a Nested List Using Recursion
+
+def sum1(lst):
+    total = 0
+    for element in lst:
+        if (type(element) == type([])):
+            total = total + sum1(element)
+        else:
+            total = total + element
+    return total
+
+# Write a Python function to Count and print the Number of Vowels Present in a String using Sets
+
+def count_vowels(s):
+    count = 0
+    vowels = set("aeiou")
+    for letter in s:
+        if letter in vowels:
+            count += 1
+    return count
+
+# Write a Python Program to prints Common Letters in Two Input Strings
+
+s1='python'
+s2='schoolofai'
+a=list(set(s1)&set(s2))
+print("The common letters are:")
+for i in a:
+    print(i)
+
+# Write a Python Program that Prints which Letters are in the First String but not in the Second
+
+s1='python'
+s2='schoolofai'
+a=list(set(s1)-set(s2))
+print("The letters are:")
+for i in a:
+    print(i)
+
+# Write a Python Program to Concatenate Two Dictionaries Into One
+
+def concat_dic(d1, d2):
+    return d1.update(d2)
+
+# Write a Python Program to Multiply All the Items in a Dictionary
+
+def mul_dict(d):
+    tot=1
+    for i in d:    
+        tot=tot*d[i]
+    return tot
+
+# Write a Python Program to Remove the Given Key from a Dictionary
+
+def remove_item_dict(d, key):
+    if key in d: 
+        del d[key]
+    else:
+        print("Key not found!")
+        exit(0)
+
+# Write a Python Program to Map Two Lists into a Dictionary
+
+def map_dict(keys, values):
+    return dict(zip(keys,values))
+
+# Write a Python Program to Remove the nth Index Character from a Non-Empty String
+
+def remove(string, n):  
+      first = string[:n]   
+      last = string[n+1:]  
+      return first + last
+
+# Write a Python Program to Detect if Two Strings are Anagrams
+
+def anagram_check(s1, s2):
+    if(sorted(s1)==sorted(s2)):
+        return True
+    else:
+        return False
+
+# Write a Python Program to Form a New String where the First Character and the Last Character have been Exchanged
+
+def change(string):
+      return string[-1:] + string[1:-1] + string[:1]
+
+# Write a Python Program to Remove the Characters of Odd Index Values in a String
+
+def modify(string):  
+    final = ""   
+    for i in range(len(string)):  
+        if i % 2 == 0:  
+            final = final + string[i]  
+    return final
+
+# Write a Python Program to Take in Two Strings and Print the Larger String
+
+string1='python'
+string2='theschoolofai'
+count1=0
+count2=0
+for i in string1:
+      count1=count1+1
+for j in string2:
+      count2=count2+1
+if(count1<count2):
+      print("Larger string is:")
+      print(string2)
+elif(count1==count2):
+      print("Both strings are equal.")
+else:
+      print("Larger string is:")
+      print(string1)
+
+# Write a Python Program to Count and print Number of Lowercase Characters in a String
+
+string='This is an Assignment'
+count=0
+for i in string:
+      if(i.islower()):
+            count=count+1
+print("The number of lowercase characters is:")
+print(count)
+
+# Write a Python Program to Put Even and Odd elements in a List into Two Different Lists
+
+a=[2, 3, 8, 9, 2, 4, 6]
+even=[]
+odd=[]
+for j in a:
+    if(j%2==0):
+        even.append(j)
+    else:
+        odd.append(j)
+print("The even list",even)
+print("The odd list",odd)
+
+# Write a Python Program to Sort the List According to the Second Element in Sublist
+
+a=[['A',34],['B',21],['C',26]]
+for i in range(0,len(a)):
+    for j in range(0,len(a)-i-1):
+        if(a[j][1]>a[j+1][1]):
+            temp=a[j]
+            a[j]=a[j+1]
+            a[j+1]=temp
+
+
+# Write a Python Program to Find the Second Largest Number in a List Using Bubble Sort
+
+a=[2, 3, 8, 9, 2, 4, 6]
+for i in range(0,len(a)):
+    for j in range(0,len(a)-i-1):
+        if(a[j]>a[j+1]):
+            temp=a[j]
+            a[j]=a[j+1]
+            a[j+1]=temp 
+
+# Write a Python Program to Find the Intersection of Two Lists
+
+def main(alist, blist):
+    def intersection(a, b):
+        return list(set(a) & set(b))
+    return intersection(alist, blist)
+
+# Write a Python Program to Create a List of Tuples with the First Element as the Number and Second Element as the Square of the Number using list comprehension
+
+l_range=2
+u_range=5
+a=[(x,x**2) for x in range(l_range,u_range+1)]
+
+
+# Write a Python Program to print all Numbers in a Range which are Perfect Squares and Sum of all Digits in the Number is Less than 10
+
+l=6
+u=9
+a=[x for x in range(l,u+1) if (int(x**0.5))**2==x and sum(list(map(int,str(x))))<10]
+print(a)
+
+# Write a Python Program to Swap the First and Last Value of a List
+
+a=[2, 3, 8, 9, 2, 4, 6]
+n = len(a)
+temp=a[0]
+a[0]=a[n-1]
+a[n-1]=temp
+print("New list is:")
+print(a)
+
+# Write a Python Program to Remove and print the Duplicate Items from a List
+
+a=[2, 3, 8, 9, 2, 4, 6]
+b = set()
+unique = []
+for x in a:
+    if x not in b:
+        unique.append(x)
+        b.add(x)
+print("Non-duplicate items:")
+print(unique)
+
+# Write a Python Program to Read a List of Words and Return the Length of the Longest One
+
+a=['the', 'tsai', 'python']
+max1=len(a[0])
+temp=a[0]
+for i in a:
+    if(len(i)>max1):
+       max1=len(i)
+       temp=i
+print("The word with the longest length is:")
+print(temp)
+
+# Write a Python Program to Remove the ith Occurrence of the Given Word in a List where Words can Repeat
+
+a=['the', 'tsai', 'python' ,'a' ,'the', 'a']
+c=[]
+count=0
+b='a'
+n=3
+for i in a:
+    if(i==b):
+        count=count+1
+        if(count!=n):
+            c.append(i)
+    else:
+        c.append(i)
+if(count==0):
+    print("Item not found ")
+else: 
+    print("The number of repetitions is: ",count)
+    print("Updated list is: ",c)
+    print("The distinct elements are: ",set(a))
+
+
+# Write a Python function to Find Element Occurring Odd Number of Times in a List
+
+def find_odd_occurring(alist):
+    """Return the element that occurs odd number of times in alist.
+ 
+    alist is a list in which all elements except one element occurs an even
+    number of times.
+    """
+    ans = 0
+ 
+    for element in alist:
+        ans ^= element
+ 
+    return ans
+
+# Write a Python Program to Check if a Date is Valid and Print the Incremented Date if it is
+
+date="20/04/2021"
+dd,mm,yy=date.split('/')
+dd=int(dd)
+mm=int(mm)
+yy=int(yy)
+if(mm==1 or mm==3 or mm==5 or mm==7 or mm==8 or mm==10 or mm==12):
+    max1=31
+elif(mm==4 or mm==6 or mm==9 or mm==11):
+    max1=30
+elif(yy%4==0 and yy%100!=0 or yy%400==0):
+    max1=29
+else:
+    max1=28
+if(mm<1 or mm>12):
+    print("Date is invalid.")
+elif(dd<1 or dd>max1):
+    print("Date is invalid.")
+elif(dd==max1 and mm!=12):
+    dd=1
+    mm=mm+1
+    print("The incremented date is: ",dd,mm,yy)
+elif(dd==31 and mm==12):
+    dd=1
+    mm=1
+    yy=yy+1
+    print("The incremented date is: ",dd,mm,yy)
+else:
+    dd=dd+1
+    print("The incremented date is: ",dd,mm,yy)
+
+
+# Write a Python function to Check Whether a Given Year is a Leap Year
+
+def leapyear_check(year):
+    if(year%4==0 and year%100!=0 or year%400==0):
+        return True
+    else:
+        return False
+
+# Write a Python Program to print Prime Factors of an Integer
+
+n=24
+print("Factors are:")
+i=1
+while(i<=n):
+    k=0
+    if(n%i==0):
+        j=1
+        while(j<=i):
+            if(i%j==0):
+                k=k+1
+            j=j+1
+        if(k==2):
+            print(i)
+    i=i+1
+
+
+# Write a Python Program to print all the Divisors of an Integer
+
+n=60
+print("The divisors of the number are:")
+for i in range(1,n+1):
+    if(n%i==0):
+        print(i)
+
+
+# Write a Python Program to Check if a Number is an Armstrong Number
+
+def amstrong_check(n):
+    a=list(map(int,str(n)))
+    b=list(map(lambda x:x**3,a))
+    if(sum(b)==n):
+        return True
+    else:
+        return False
+
+# Write a Python Program to Print the Pascal’s triangle for n number of rows given by the user
+
+n=10
+a=[]
+for i in range(n):
+    a.append([])
+    a[i].append(1)
+    for j in range(1,i):
+        a[i].append(a[i-1][j-1]+a[i-1][j])
+    if(n!=0):
+        a[i].append(1)
+for i in range(n):
+    print("   "*(n-i),end=" ",sep=" ")
+    for j in range(0,i+1):
+        print('{0:6}'.format(a[i][j]),end=" ",sep=" ")
+    print()
+
+# Write a Python Program to Check if a Number is a Perfect Number
+
+def perfect_no_check(n):
+    sum1 = 0
+    for i in range(1, n):
+        if(n % i == 0):
+            sum1 = sum1 + i
+    if (sum1 == n):
+        return True
+    else:
+        return False
+
+# Write a Python Program to Check if a Number is a Strong Number
+
+def strong_no_check(num):
+    sum1=0
+    temp=num
+    while(num):
+        i=1
+        f=1
+        r=num%10
+        while(i<=r):
+            f=f*i
+            i=i+1
+        sum1=sum1+f
+        num=num//10
+    if(sum1==temp):
+        return True
+    else:
+        return False
+
+# Write a Python Program to Check If Two Numbers are Amicable Numbers
+
+def amicable_no_check(x, y):
+    sum1=0
+    sum2=0
+    for i in range(1,x):
+        if x%i==0:
+            sum1+=i
+    for j in range(1,y):
+        if y%j==0:
+            sum2+=j
+    if(sum1==y and sum2==x):
+        return True
+    else:
+        return False
+
+# Write a Python Program to Check if a Number is a Prime Number
+
+def prime_no_check(a):
+    k=0
+    for i in range(2,a//2+1):
+        if(a%i==0):
+            k=k+1
+    if(k<=0):
+        return True
+    else:
+        return False
+
+# Write a Python Program to print the Sum of First N Natural Numbers
+
+n=7
+sum1 = 0
+while(n > 0):
+    sum1=sum1+n
+    n=n-1
+print("The sum of first n natural numbers is",sum1)
+
+# Write a Python Program to Print all Pythagorean Triplets in the Range
+
+limit=10
+c=0
+m=2
+while(c<limit):
+    for n in range(1,m+1):
+        a=m*m-n*n
+        b=2*m*n
+        c=m*m+n*n
+        if(c>limit):
+            break
+        if(a==0 or b==0 or c==0):
+            break
+        print(a,b,c)
+    m=m+1
+
+# Write a Python Program to print the Number of Times a Particular Number Occurs in a List
+
+a=[2, 3, 8, 9, 2, 4, 6]
+k=0
+num=int(input("Enter the number to be counted:"))
+for j in a:
+    if(j==num):
+        k=k+1
+print("Number of times",num,"appears is",k)
+
+# Write a Python Program to test and print Collatz Conjecture for a Given Number
+
+def collatz(n):
+    while n > 1:
+        print(n, end=' ')
+        if (n % 2):
+            # n is odd
+            n = 3*n + 1
+        else:
+            # n is even
+            n = n//2
+    print(1, end='')
+
+# Write a Python function to Count Set Bits in a Number
+
+def count_set_bits(n):
+    count = 0
+    while n:
+        n &= n - 1
+        count += 1
+    return count
+
+# Write a Python Program to Generate Gray Codes using Recursion
+
+def get_gray_codes(n):
+    """Return n-bit Gray code in a list."""
+    if n == 0:
+        return ['']
+    first_half = get_gray_codes(n - 1)
+    second_half = first_half.copy()
+ 
+    first_half = ['0' + code for code in first_half]
+    second_half = ['1' + code for code in reversed(second_half)]
+ 
+    return first_half + second_half
+
+# Write a Python Program to Convert Gray Code to Binary
+
+def gray_to_binary(n):
+    """Convert Gray codeword to binary and return it."""
+    n = int(n, 2)
+ 
+    mask = n
+    while mask != 0:
+        mask >>= 1
+        n ^= mask
+
+    return bin(n)[2:]
+
+# Write a Python Program to Convert Binary to Gray Code
+
+def binary_to_gray(n):
+    """Convert Binary to Gray codeword and return it."""
+    n = int(n, 2)
+    n ^= (n >> 1)
+
+    return bin(n)[2:]
+
+# Write a Python Program to print the Reverse a Given Number
+
+n=1023
+rev=0
+while(n>0):
+    dig=n%10
+    rev=rev*10+dig
+    n=n//10
+print("Reverse of the number:",rev)
+
+# Write a Python Program to Accept Three Digits and Print all Possible Combinations from the Digits
+
+a=2
+b=9
+c=5
+d=[]
+d.append(a)
+d.append(b)
+d.append(c)
+for i in range(0,3):
+    for j in range(0,3):
+        for k in range(0,3):
+            if(i!=j&j!=k&k!=i):
+                print(d[i],d[j],d[k])
+
+# Write a Python function to Print an Identity Matrix
+
+def print_identity_matrix(n):
+    for i in range(0,n):
+        for j in range(0,n):
+            if(i==j):
+                print("1",sep=" ",end=" ")
+            else:
+                print("0",sep=" ",end=" ")
+        print()
+
+# Write a Python Program Print Restaurant Menu using Class given menu and cost as list
+
+class Food(object):
+    def __init__(self, name, price):
+        self.name = name
+        self.price = price
+    
+    def getprice(self):
+        return self.price
+    
+    def __str__(self):
+        return self.name + ' : ' + str(self.getprice())
+    
+def buildmenu(names, costs):
+    menu = []
+    for i in range(len(names)):
+        menu.append(Food(names[i], costs[i]))
+    return menu
+
+names = ['Coffee', 'Tea', 'Pizza', 'Burger', 'Fries', 'Apple', 'Donut', 'Cake']
+
+costs = [250, 150, 180, 70, 65, 55, 120, 350]
+
+Foods = buildmenu(names, costs)
+
+n = 1
+for el in Foods:
+    print(n,'. ', el)
+    n = n + 1
+
+# Write a Python Program to print a list of fibonacci series for a given no using closer
+
+def fib():
+    cache = {1:1, 2:1}
+
+    def calc_fib(n):
+        if n not in cache:
+            print(f'Calculating fib({n})')
+            cache[n] = calc_fib(n - 1) + calc_fib(n - 2)
+        return cache[n]
+    return calc_fib
+
+# Write a Python Program to print a list of fibonacci series for a given no using class
+
+class Fib:
+    def __init__(self):
+        self.cache = {1:1, 2:1}
+
+    def fib(self, n):
+        if n not in self.cache:
+            print(f'Calculating fib({n})')
+            self.cache[n] = self.fib(n-1) + self.fib(n-2)
+        return self.cache[n]
+
+# Write a Python function to calculate factorial of a given no using closer
+
+def fact():
+    cache = {0:1, 1:1}
+
+    def calc_fib(n):
+        if n not in cache:
+            print(f'Calculating fact({n})')
+            cache[n] = calc_fib(n - 1) * n
+        return cache[n]
+    return calc_fib
+
+# Write a Python function to calculate factorial of a given no using class
+
+class Fact:
+    def __init__(self):
+        self.cache = {0:1, 1:1}
+
+    def fact(self, n):
+        if n not in self.cache:
+            self.cache[n] = self.fact(n-1) * n
+        return self.cache[n]
+
+# Write a Python function to calculate dot product of two given sequence
+
+def dot_product(a, b):
+    return sum( e[0]*e[1] for e in zip(a, b))
+
+# Write a Python function to Find the Sum of Sine Series
+
+import math
+def sin(x,n):
+    sine = 0
+    for i in range(n):
+        sign = (-1)**i
+        pi=22/7
+        y=x*(pi/180)
+        sine = sine + ((y**(2.0*i+1))/math.factorial(2*i+1))*sign
+    return sine
+
+# Write a Python function to Find the Sum of Cosine Series
+
+def cosine(x,n):
+    cosx = 1
+    sign = -1
+    for i in range(2, n, 2):
+        pi=22/7
+        y=x*(pi/180)
+        cosx = cosx + (sign*(y**i))/math.factorial(i)
+        sign = -sign
+    return cosx
+
+# Write a Python function to strip vowels from a string
+
+def vowel_stripping(string):
+    '''This function takes a string as an input strips out vowels and returns stripted out string'''
+    return "".join([x for x in string if x not in('a','e','i','o','u')])
+
+# Write a Python function that shifts the character of strings
+
+def char_shift(string, shift_count):
+    '''This function takes a string as an input and shifts each character by 5 and returns shifted string'''
+    return "".join([chr(ord(x)+shift_count) if (ord(x)+shift_count) <= 122 else chr(96 + (ord(x)+shift_count) - 122) for x in string])
+
+# Write a Python function that returns biggest character in a string
+
+from functools import reduce
+def biggest_char(string):
+    '''This function takes an input as a string and returns the biggest output character in the string'''
+    biggest_chr = lambda x, y: x if ord(x) > ord(y) else y
+    return reduce(biggest_chr, string)
+
+# Write a Python function that calculate interior angle of a equilateral polygon
+
+def interior_angle(no_of_sides):
+    return (no_of_sides - 2) * 180 / no_of_sides
+
+# Write a Python function that calculate side length of a equilateral polygon
+
+import math
+def side_length(no_of_sides, circumradius):
+    return 2 * circumradius * math.sin(math.pi / no_of_sides)
+
+# Write a Python function that calculate area of a equilateral polygon
+
+import math
+def area(no_of_sides, circumradius):
+    side_length = 2 * circumradius * math.sin(math.pi / no_of_sides)
+    apothem = circumradius * math.cos(math.pi / no_of_sides)
+    return no_of_sides / 2 * side_length * apothem
+
+# sample.py
+from datetime import datetime
+from time import perf_counter
+import random
+val = 10
+counter_67 = dict()
+
+
+#1 Write a function to print given interger to binary
+def int_to_binary(num: int):
+    """
+    function to print number to binary
+    """
+    if isinstance(num, int):
+        print(f'The binary of {num} is {bin(num).replace("0b","")}')
+    else:
+        raise ValueError('Invalid Input')
+
+
+#2 write a function to check given string is palindrome or not ( case insensitive )
+def palindrome_str_check(value: str):
+    """
+    function to print whether string is palindrome or not
+    """
+    if isinstance(value, str) :
+        print( value.lower() == value[::-1].lower() )
+    else:
+        raise ValueError('Invalid Input')
+
+
+#3 write a function to check whether a given date in DD/MM/YYYY format is valid or not
+def date_validation(inputdate: str):
+    """
+    function take input date in DD/MM/YYYY format and check its validation.
+    """
+    import datetime
+    dd, mm, year = inputdate.split('/')
+    isValidDate = True
+    try :
+        datetime.datetime(int(year),int(mm), int(dd))
+    except ValueError : 
+        isValidDate = False
+    if(isValidDate):
+        print ("Input Date is Valid")
+    else:
+        print ("Input Date is invalid")
+
+
+#4 write a function to print the count of divisor.
+def divisor_count(num: int):
+    """
+    function to count the number of divisor of interger.
+    """
+    if isinstance(num, int):
+        count = 0
+        for i in range(1, num+1):
+            if num%i == 0:
+                count = count+1
+        print(f'Number of divisor is {count}')
+    else:
+        raise ValueError('Invalid Input')
+
+
+#5 write a function to print the count of divisor using list comprehension
+def divisor_using_list(num: int):
+    """
+    function to count the number of divisor using list comprehension.
+    """
+    if isinstance(num, int):
+        count = [i for i in range(1,num+1) if not num%i]
+        print(f'Number of divisor is {count}')
+    else:
+        raise ValueError('Invalid Input')
+
+
+#6 write a function to print merger of two dictionary
+def merge_dict(dict1: dict, dict2: dict):
+    """
+    function to print merger of two dictionary
+    """
+    final_dict = {**dict1, **dict2}
+    print(final_dict)
+
+
+#7 write a function to print second largest number in a list.
+def second_large_num(num: list):
+    if isinstance(num, list):
+        num.sort()
+        print (num[-2])
+    else:
+        raise ValueError('Invalid Input')
+
+
+#8 write a function to remove empty list from a list and print.
+def remove_empty_list(num1: list):
+    if isinstance(num1, list):
+        modified = list(filter(None, num1))
+        print(modified)
+
+
+#9 write a function to remove empty tuples from a list and print
+def remove_empty_tuple(num1: list):
+    if isinstance(num1, list):
+        modified = list(filter(None, num1))
+        print(modified)
+
+
+#10 write a python function to remove duplicate from a list.
+def remove_duplicates(dup_list: list):
+    print(list(set(dup_list)))
+
+
+#11 write a function to reverse every word in a string
+def reverse_word(sen: str):
+    words = sen.split(' ')
+    rever_word = [ i[::-1] for i in words ]
+    final_sen = ' '.join(rever_word)
+    print(final_sen)
+
+
+#12 function to check leap year
+def check_leap_year(year: int):
+    if not year%4:
+        print('Leap Year')
+    else:
+        print('Not a leap year')
+
+
+#13 function to print the multiplication table
+def maths_tables( no_ : int):
+     for i in range(1, 11):
+         print(f'{no_}x{i}={no_*i}')
+
+
+#14 function to check armstrong number or not
+def check_armstrong(no_: int):
+    sum_ = 0
+    temp = no_
+    while temp > 0:
+        digit = temp % 10
+        sum_ += digit ** 3 
+        temp //= 10
+
+    if no_ == sum_:  
+       print(f"{no_} is an Armstrong number")  
+    else:  
+       print(f"{no_} is not an Armstrong number")
+
+
+#15 function to print all armstrong in a range
+def print_all_armstrong(lower: int, upper: int):
+    for num in range(lower,upper + 1):  
+        sum_ = 0
+        temp = num
+        while temp > 0:
+            digit = temp % 10
+            sum_ += digit ** 3
+            temp //= 10
+            if num == sum_:
+                print(num)
+
+#17 function to print the lcm of two number
+def ret_lcm(x: int, y: int):
+    if x > y:
+        greater = x
+    else:
+        greater = y
+    while(True):
+        if((greater % x == 0) and (greater % y == 0)):
+            lcm = greater
+            break
+        greater += 1
+    return lcm

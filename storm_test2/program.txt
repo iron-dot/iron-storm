@@ -1,0 +1,1638 @@
+## Write a ai program to make better ai
+# Write a ai program to make better ai moudule import 
+import random
+import time
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torchtext
+from torch.utils.data import DataLoader, Dataset
+from torchtext.legacy import data
+from torchtext.legacy.data import BucketIterator, Field, Iterator
+import nltk
+import re
+import spacy
+import tensorflow as tf
+import tensorflow_datasets as tfds
+import datetime
+import gradio as gr
+from translate import Translator
+import sys
+import json
+import math
+import os
+import urllib.request
+import webbrowser
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import wikipedia
+import wolframalpha
+from nltk.stem.porter import PorterStemmer
+import csv
+import torch.nn.functional as F
+
+#Write a ai program to make better ai time caculate1
+start = time.time()
+
+#Write a ai program to make better ai data load and preprocessing
+f = open("codecreate_data.txt", "r", encoding='utf-8')
+file_lines = f.readlines()
+file_lines[:20]
+dps = []
+dp = None
+for line in file_lines:
+  if line[0] == "#":
+    if dp:
+      dp['solution'] = ''.join(dp['solution'])
+      dps.append(dp)
+    dp = {"question": None, "solution": []}
+    dp['question'] = line[1:]
+  else:
+    dp["solution"].append(line)
+i=0
+for dp in dps:
+  print("\n Question no: ", i+1)
+  i+=1
+  print(dp['question'][1:])
+  print(dp['solution'])
+  if i>49:
+    break
+print("Dataset size:", len(dps))
+
+# Write a ai program to make better ai data tokenize
+from tokenize import tokenize, untokenize
+import io
+def tokenize_python_code(python_code_str):
+    python_tokens = list(tokenize(io.BytesIO(python_code_str.encode('utf-8')).readline))
+    tokenized_output = []
+    for i in range(0, len(python_tokens)):
+        tokenized_output.append((python_tokens[i].type, python_tokens[i].string))
+    return tokenized_output
+tokenized_sample = tokenize_python_code(dps[1]['solution'])
+print(tokenized_sample)
+print(untokenize(tokenized_sample).decode('utf-8'))
+import keyword
+print(keyword.kwlist)
+def augment_tokenize_python_code(python_code_str, mask_factor=0.3):
+    var_dict = {} # Dictionary that stores masked variables
+    skip_list = ['range', 'enumerate', 'print', 'ord', 'int', 'float', 'zip'
+                 'char', 'list', 'dict', 'tuple', 'set', 'len', 'sum', 'min', 'max']
+    skip_list.extend(keyword.kwlist)
+    var_counter = 1
+    python_tokens = list(tokenize(io.BytesIO(python_code_str.encode('utf-8')).readline))
+    tokenized_output = []
+    for i in range(0, len(python_tokens)):
+      if python_tokens[i].type == 1 and python_tokens[i].string not in skip_list:
+        if i>0 and python_tokens[i-1].string in ['def', '.', 'import', 'raise', 'except', 'class']: # avoid masking modules, functions and error literals
+          skip_list.append(python_tokens[i].string)
+          tokenized_output.append((python_tokens[i].type, python_tokens[i].string))
+        elif python_tokens[i].string in var_dict:  # if variable is already masked
+          tokenized_output.append((python_tokens[i].type, var_dict[python_tokens[i].string]))
+        elif random.uniform(0, 1) > 1-mask_factor: # randomly mask variables
+          var_dict[python_tokens[i].string] = 'var_' + str(var_counter)
+          var_counter+=1
+          tokenized_output.append((python_tokens[i].type, var_dict[python_tokens[i].string]))
+        else:
+          skip_list.append(python_tokens[i].string)
+          tokenized_output.append((python_tokens[i].type, python_tokens[i].string))
+      else:
+        tokenized_output.append((python_tokens[i].type, python_tokens[i].string))
+    return tokenized_output
+tokenized_sample = augment_tokenize_python_code(dps[1]['solution'])
+print(tokenized_sample)
+
+#Write a ai program to make better ai dataframe generate, head, shape
+python_problems_df = pd.DataFrame(dps)
+python_problems_df.head()
+python_problems_df.shape
+
+# Write a ai program to make better ai numpy import
+import numpy as np
+
+# Write a ai program to make better ai numpy random seed
+np.random.seed(0)
+
+# Write a ai program to make better ai msk variable generate
+msk = np.random.rand(len(python_problems_df)) < 0.85 
+
+# Write a ai program to make better ai train_df variable generate
+train_df = python_problems_df[msk]
+
+# Write a ai program to make better ai val_df variable generate
+val_df = python_problems_df[~msk]
+
+# Write a ai program to make better ai train_df variable shape
+train_df.shape
+
+# Write a ai program to make better ai val_df variable shape
+val_df.shape
+
+# Write a ai program to make better ai seed working
+SEED = 1234
+random.seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.backends.cudnn.deterministic = True
+
+# Write a ai program to make better ai Input variable generate
+Input = data.Field(tokenize = 'spacy',
+            init_token='<sos>', 
+            eos_token='<eos>', 
+            lower=True)
+
+# Write a ai program to make better ai Output variable generate
+Output = data.Field(tokenize = augment_tokenize_python_code,
+                    init_token='<sos>', 
+                    eos_token='<eos>', 
+                    lower=False)
+
+# Write a ai program to make better ai example list generate
+fields = [('Input', Input),('Output', Output)]
+train_example = []
+val_example = []
+train_expansion_factor = 100
+for j in range(train_expansion_factor):
+  for i in range(train_df.shape[0]):
+      try:
+          ex = data.Example.fromlist([train_df.question[i], train_df.solution[i]], fields)
+          train_example.append(ex)
+      except:
+          pass
+for i in range(val_df.shape[0]):
+    try:
+        ex = data.Example.fromlist([val_df.question[i], val_df.solution[i]], fields)
+        val_example.append(ex)
+    except:
+        pass       
+
+# Write a ai program to make better ai train_data variable generate
+train_data = data.Dataset(train_example, fields)
+
+# Write a ai program to make better ai valid_data variable generate
+valid_data =  data.Dataset(val_example, fields)
+
+# Write a ai program to make better ai Input build_vocab
+Input.build_vocab(train_data, min_freq = 0)
+
+# Write a ai program to make better ai Output build_vocab
+Output.build_vocab(train_data, min_freq = 0)
+
+# Write a ai program to make better ai Output vocab
+Output.vocab
+
+# Write a ai program to make better ai save_vocab fuction generate
+def save_vocab(vocab, path):
+    import pickle
+    output = open(path, 'wb')
+    pickle.dump(vocab, output)
+    output.close()
+
+# Write a ai program to make better ai device variable generate
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device
+
+# Write a ai program to make better ai train_data variable Output
+train_data[0].Output
+
+# Write a ai program to make better ai train_data example print
+print(vars(train_data.examples[1]))
+
+# Write a ai program to make better ai Encoder class generate
+class Encoder(nn.Module):
+    def __init__(self, 
+                 input_dim, 
+                 hid_dim, 
+                 n_layers, 
+                 n_heads, 
+                 pf_dim,
+                 dropout, 
+                 device,
+                 max_length = 1000):
+        super().__init__()
+        self.device = device
+        self.tok_embedding = nn.Embedding(input_dim, hid_dim)
+        self.pos_embedding = nn.Embedding(max_length, hid_dim)
+        self.layers = nn.ModuleList([EncoderLayer(hid_dim, 
+                                                  n_heads, 
+                                                  pf_dim,
+                                                  dropout, 
+                                                  device) 
+                                     for _ in range(n_layers)])
+        self.dropout = nn.Dropout(dropout)
+        self.scale = torch.sqrt(torch.FloatTensor([hid_dim])).to(device)
+    def forward(self, src, src_mask):
+        batch_size = src.shape[0]
+        src_len = src.shape[1]
+        pos = torch.arange(0, src_len).unsqueeze(0).repeat(batch_size, 1).to(self.device)
+        src = self.dropout((self.tok_embedding(src) * self.scale) + self.pos_embedding(pos))
+        for layer in self.layers:
+            src = layer(src, src_mask)
+        return src
+
+# Write a ai program to make better ai EncoderLayer class generate
+class EncoderLayer(nn.Module):
+    def __init__(self, 
+                 hid_dim, 
+                 n_heads, 
+                 pf_dim,  
+                 dropout, 
+                 device):
+        super().__init__()
+        self.self_attn_layer_norm = nn.LayerNorm(hid_dim)
+        self.ff_layer_norm = nn.LayerNorm(hid_dim)
+        self.self_attention = MultiHeadAttentionLayer(hid_dim, n_heads, dropout, device)
+        self.positionwise_feedforward = PositionwiseFeedforwardLayer(hid_dim, 
+                                                                     pf_dim, 
+                                                                     dropout)
+        self.dropout = nn.Dropout(dropout)
+    def forward(self, src, src_mask):
+        _src, _ = self.self_attention(src, src, src, src_mask)
+        src = self.self_attn_layer_norm(src + self.dropout(_src))
+        _src = self.positionwise_feedforward(src)
+        src = self.ff_layer_norm(src + self.dropout(_src))
+        return src
+
+# Write a ai program to make better ai PositionwiseFeedforwardLayer class generate
+class PositionwiseFeedforwardLayer(nn.Module):
+    def __init__(self, hid_dim, pf_dim, dropout):
+        super().__init__()
+        self.fc_1 = nn.Linear(hid_dim, pf_dim)
+        self.fc_2 = nn.Linear(pf_dim, hid_dim)
+        self.dropout = nn.Dropout(dropout)
+    def forward(self, x):
+        x = self.dropout(torch.relu(self.fc_1(x)))
+        x = self.fc_2(x)
+        return x
+
+# Write a ai program to make better ai MultiHeadAttentionLayer class generate
+class MultiHeadAttentionLayer(nn.Module):
+    def __init__(self, hid_dim, n_heads, dropout, device):
+        super().__init__()
+        
+        assert hid_dim % n_heads == 0
+        
+        self.hid_dim = hid_dim
+        self.n_heads = n_heads
+        self.head_dim = hid_dim // n_heads
+        
+        self.fc_q = nn.Linear(hid_dim, hid_dim)
+        self.fc_k = nn.Linear(hid_dim, hid_dim)
+        self.fc_v = nn.Linear(hid_dim, hid_dim)
+        
+        self.fc_o = nn.Linear(hid_dim, hid_dim)
+        
+        self.dropout = nn.Dropout(dropout)
+        
+        self.scale = torch.sqrt(torch.FloatTensor([self.head_dim])).to(device)
+        
+    def forward(self, query, key, value, mask = None):
+        
+        batch_size = query.shape[0]
+        
+        Q = self.fc_q(query)
+        K = self.fc_k(key)
+        V = self.fc_v(value)
+        
+             
+        Q = Q.view(batch_size, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        K = K.view(batch_size, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        V = V.view(batch_size, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        
+             
+        energy = torch.matmul(Q, K.permute(0, 1, 3, 2)) / self.scale
+        
+        
+        if mask is not None:
+            energy = energy.masked_fill(mask == 0, -1e10)
+        
+        attention = torch.softmax(energy, dim = -1)
+                
+        #attention = [batch size, n heads, query len, key len]
+                
+        x = torch.matmul(self.dropout(attention), V)
+        
+        
+        x = x.permute(0, 2, 1, 3).contiguous()
+        
+        
+        x = x.view(batch_size, -1, self.hid_dim)
+        
+        
+        x = self.fc_o(x)
+        
+        
+        return x, attention
+
+# Write a ai program to make better ai Decoder class generate
+class Decoder(nn.Module):
+    def __init__(self, 
+                 output_dim, 
+                 hid_dim, 
+                 n_layers, 
+                 n_heads, 
+                 pf_dim, 
+                 dropout, 
+                 device,
+                 max_length = 10000):
+        super().__init__()
+        
+        self.device = device
+        
+        self.tok_embedding = nn.Embedding(output_dim, hid_dim)
+        self.pos_embedding = nn.Embedding(max_length, hid_dim)
+        
+        self.layers = nn.ModuleList([DecoderLayer(hid_dim, 
+                                                  n_heads, 
+                                                  pf_dim, 
+                                                  dropout, 
+                                                  device)
+                                     for _ in range(n_layers)])
+        
+        self.fc_out = nn.Linear(hid_dim, output_dim)
+        
+        self.dropout = nn.Dropout(dropout)
+        
+        self.scale = torch.sqrt(torch.FloatTensor([hid_dim])).to(device)
+        
+    def forward(self, trg, enc_src, trg_mask, src_mask):
+        
+          
+        batch_size = trg.shape[0]
+        trg_len = trg.shape[1]
+        
+        pos = torch.arange(0, trg_len).unsqueeze(0).repeat(batch_size, 1).to(self.device)
+                            
+        trg = self.dropout((self.tok_embedding(trg) * self.scale) + self.pos_embedding(pos))
+
+        for layer in self.layers:
+            trg, attention = layer(trg, enc_src, trg_mask, src_mask)
+        
+        output = self.fc_out(trg)  
+        return output, attention
+
+# Write a ai program to make better ai DecoderLayer class generate
+class DecoderLayer(nn.Module):
+    def __init__(self, 
+                 hid_dim, 
+                 n_heads, 
+                 pf_dim, 
+                 dropout, 
+                 device):
+        super().__init__()
+        
+        self.self_attn_layer_norm = nn.LayerNorm(hid_dim)
+        self.enc_attn_layer_norm = nn.LayerNorm(hid_dim)
+        self.ff_layer_norm = nn.LayerNorm(hid_dim)
+        self.self_attention = MultiHeadAttentionLayer(hid_dim, n_heads, dropout, device)
+        self.encoder_attention = MultiHeadAttentionLayer(hid_dim, n_heads, dropout, device)
+        self.positionwise_feedforward = PositionwiseFeedforwardLayer(hid_dim, 
+                                                                     pf_dim, 
+                                                                     dropout)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, trg, enc_src, trg_mask, src_mask):
+        
+        
+        _trg, _ = self.self_attention(trg, trg, trg, trg_mask)
+        
+        
+        trg = self.self_attn_layer_norm(trg + self.dropout(_trg))
+
+        _trg, attention = self.encoder_attention(trg, enc_src, enc_src, src_mask)
+        
+        trg = self.enc_attn_layer_norm(trg + self.dropout(_trg))
+                    
+        
+        _trg = self.positionwise_feedforward(trg)
+        
+        
+        trg = self.ff_layer_norm(trg + self.dropout(_trg))
+        
+        return trg, attention
+
+# Write a ai program to make better ai Seq2Seq class generate
+class Seq2Seq(nn.Module):
+    def __init__(self, 
+                 encoder, 
+                 decoder, 
+                 src_pad_idx, 
+                 trg_pad_idx, 
+                 device):
+        super().__init__()
+        
+        self.encoder = encoder
+        self.decoder = decoder
+        self.src_pad_idx = src_pad_idx
+        self.trg_pad_idx = trg_pad_idx
+        self.device = device
+        
+    def make_src_mask(self, src):
+        
+        
+        src_mask = (src != self.src_pad_idx).unsqueeze(1).unsqueeze(2)
+
+        #src_mask = [batch size, 1, 1, src len]
+
+        return src_mask
+    
+    def make_trg_mask(self, trg):
+        
+        
+        trg_pad_mask = (trg != self.trg_pad_idx).unsqueeze(1).unsqueeze(2)
+        
+        
+        trg_len = trg.shape[1]
+        
+        trg_sub_mask = torch.tril(torch.ones((trg_len, trg_len), device = self.device)).bool()
+        
+        
+        trg_mask = trg_pad_mask & trg_sub_mask
+        
+        #trg_mask = [batch size, 1, trg len, trg len]
+        
+        return trg_mask
+
+    def forward(self, src, trg):
+        
+            
+        src_mask = self.make_src_mask(src)
+        trg_mask = self.make_trg_mask(trg)
+        
+        
+        enc_src = self.encoder(src, src_mask)
+        
+        #enc_src = [batch size, src len, hid dim]
+                
+        output, attention = self.decoder(trg, enc_src, trg_mask, src_mask)
+        
+        
+        return output, attention
+
+# Write a ai program to make better ai ready to model generate
+INPUT_DIM = len(Input.vocab)
+OUTPUT_DIM = len(Output.vocab)
+HID_DIM = 256
+ENC_LAYERS = 3
+DEC_LAYERS = 3
+ENC_HEADS = 16
+DEC_HEADS = 16
+ENC_PF_DIM = 512
+DEC_PF_DIM = 512
+ENC_DROPOUT = 0.1
+DEC_DROPOUT = 0.1
+
+enc = Encoder(INPUT_DIM, 
+              HID_DIM, 
+              ENC_LAYERS, 
+              ENC_HEADS, 
+              ENC_PF_DIM, 
+              ENC_DROPOUT, 
+              device)
+
+dec = Decoder(OUTPUT_DIM, 
+              HID_DIM, 
+              DEC_LAYERS, 
+              DEC_HEADS, 
+              DEC_PF_DIM, 
+              DEC_DROPOUT, 
+              device)
+len(Output.vocab.__dict__['freqs'])
+SRC_PAD_IDX = Input.vocab.stoi[Input.pad_token]
+TRG_PAD_IDX = Output.vocab.stoi[Output.pad_token]
+
+# Write a ai program to make better ai model generate
+model = Seq2Seq(enc, dec, SRC_PAD_IDX, TRG_PAD_IDX, device).to(device)
+
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+print(f'The model has {count_parameters(model):,} trainable parameters')
+# Write a ai program to make better ai initialize_weights function generate
+def initialize_weights(m):
+    if hasattr(m, 'weight') and m.weight.dim() > 1:
+        nn.init.xavier_uniform_(m.weight.data)
+
+# Write a ai program to make better ai model.apply
+model.apply(initialize_weights);
+
+# Write a ai program to make better ai LEARNING_RATE variable generate, file save
+LEARNING_RATE = 0.0005
+f = open('lr.txt', 'w', encoding='utf-8')
+f.write(str(LEARNING_RATE))
+
+# Write a ai program to make better ai optimizer variable generate, file save
+optimizer = torch.optim.Adam(model.parameters(), lr = LEARNING_RATE)
+f = open('optimizer.txt', 'w', encoding='utf-8')
+f.write("Adam")#기본은 아담 이지만 개선할때 걸린 옵티마이저를 이다음 개선 됬을때부터는 사용한다
+
+# Write a ai program to make better ai CrossEntropyLoss class generate and cross_entropy working
+class CrossEntropyLoss(nn.CrossEntropyLoss):
+    """CrossEntropyLoss - with ability to recieve distrbution as targets, and optional label smoothing"""
+
+    def __init__(self, weight=None, ignore_index=-100, reduction='mean', smooth_eps=None, smooth_dist=None, from_logits=True):
+        super(CrossEntropyLoss, self).__init__(weight=weight,
+                                               ignore_index=ignore_index, reduction=reduction)
+        self.smooth_eps = smooth_eps
+        self.smooth_dist = smooth_dist
+        self.from_logits = from_logits
+
+    def forward(self, input, target, smooth_dist=None):
+        if smooth_dist is None:
+            smooth_dist = self.smooth_dist
+        return cross_entropy(input, target, weight=self.weight, ignore_index=self.ignore_index,
+                             reduction=self.reduction, smooth_eps=self.smooth_eps,
+                             smooth_dist=smooth_dist, from_logits=self.from_logits)
+
+
+def cross_entropy(inputs, target, weight=None, ignore_index=-100, reduction='mean',
+                  smooth_eps=None, smooth_dist=None, from_logits=True):
+    """cross entropy loss, with support for target distributions and label smoothing https://arxiv.org/abs/1512.00567"""
+    smooth_eps = smooth_eps or 0
+
+    # ordinary log-liklihood - use cross_entropy from nn
+    if _is_long(target) and smooth_eps == 0:
+        if from_logits:
+            return F.cross_entropy(inputs, target, weight, ignore_index=ignore_index, reduction=reduction)
+        else:
+            return F.nll_loss(inputs, target, weight, ignore_index=ignore_index, reduction=reduction)
+
+    if from_logits:
+        # log-softmax of inputs
+        lsm = F.log_softmax(inputs, dim=-1)
+    else:
+        lsm = inputs
+
+    masked_indices = None
+    num_classes = inputs.size(-1)
+
+    if _is_long(target) and ignore_index >= 0:
+        masked_indices = target.eq(ignore_index)
+
+    if smooth_eps > 0 and smooth_dist is not None:
+        if _is_long(target):
+            target = onehot(target, num_classes).type_as(inputs)
+        if smooth_dist.dim() < target.dim():
+            smooth_dist = smooth_dist.unsqueeze(0)
+        target.lerp_(smooth_dist, smooth_eps)
+
+    if weight is not None:
+        lsm = lsm * weight.unsqueeze(0)
+
+    if _is_long(target):
+        eps_sum = smooth_eps / num_classes
+        eps_nll = 1. - eps_sum - smooth_eps
+        likelihood = lsm.gather(dim=-1, index=target.unsqueeze(-1)).squeeze(-1)
+        loss = -(eps_nll * likelihood + eps_sum * lsm.sum(-1))
+    else:
+        loss = -(target * lsm).sum(-1)
+
+    if masked_indices is not None:
+        loss.masked_fill_(masked_indices, 0)
+
+    if reduction == 'sum':
+        loss = loss.sum()
+    elif reduction == 'mean':
+        if masked_indices is None:
+            loss = loss.mean()
+        else:
+            loss = loss.sum() / float(loss.size(0) - masked_indices.sum())
+
+    return loss
+
+
+def onehot(indexes, N=None, ignore_index=None):
+    """
+    Creates a one-representation of indexes with N possible entries
+    if N is not specified, it will suit the maximum index appearing.
+    indexes is a long-tensor of indexes
+    ignore_index will be zero in onehot representation
+    """
+    if N is None:
+        N = indexes.max() + 1
+    sz = list(indexes.size())
+    output = indexes.new().byte().resize_(*sz, N).zero_()
+    output.scatter_(-1, indexes.unsqueeze(-1), 1)
+    if ignore_index is not None and ignore_index >= 0:
+        output.masked_fill_(indexes.eq(ignore_index).unsqueeze(-1), 0)
+    return output
+
+def _is_long(x):
+    if hasattr(x, 'data'):
+        x = x.data
+    return isinstance(x, torch.LongTensor) or isinstance(x, torch.cuda.LongTensor)
+def maskNLLLoss(inp, target, mask):
+    # print(inp.shape, target.shape, mask.sum())
+    nTotal = mask.sum()
+    crossEntropy = CrossEntropyLoss(ignore_index = TRG_PAD_IDX, smooth_eps=0.20)
+    loss = crossEntropy(inp, target)
+    loss = loss.to(device)
+    return loss, nTotal.item()
+
+# Write a ai program to make better ai criterion variable generate
+criterion = maskNLLLoss
+
+# Write a ai program to make better ai tqdm moudule import 
+from tqdm import tqdm
+
+# Write a ai program to make better ai make_trg_mask function generate
+def make_trg_mask(trg):
+        
+        #trg = [batch size, trg len]
+        
+        trg_pad_mask = (trg != TRG_PAD_IDX).unsqueeze(1).unsqueeze(2)
+        
+        #trg_pad_mask = [batch size, 1, 1, trg len]
+        
+        trg_len = trg.shape[1]
+        
+        trg_sub_mask = torch.tril(torch.ones((trg_len, trg_len), device = device)).bool()
+        
+        #trg_sub_mask = [trg len, trg len]
+            
+        trg_mask = trg_pad_mask & trg_sub_mask
+        
+        #trg_mask = [batch size, 1, trg len, trg len]
+        
+        return trg_mask
+
+# Write a ai program to make better ai train function generate
+def train(model, iterator, optimizer, criterion, clip):
+    
+    model.train()
+    
+    n_totals = 0
+    print_losses = []
+    for i, batch in tqdm(enumerate(iterator), total=len(iterator)):
+        # print(batch)
+        loss = 0
+        src = batch.Input.permute(1, 0)
+        trg = batch.Output.permute(1, 0)
+        trg_mask = make_trg_mask(trg)
+        optimizer.zero_grad()
+        
+        output, _ = model(src, trg[:,:-1])
+                
+        #output = [batch size, trg len - 1, output dim]
+        #trg = [batch size, trg len]
+            
+        output_dim = output.shape[-1]
+            
+        output = output.contiguous().view(-1, output_dim)
+        trg = trg[:,1:].contiguous().view(-1)
+                
+        #output = [batch size * trg len - 1, output dim]
+        #trg = [batch size * trg len - 1]
+            
+        mask_loss, nTotal = criterion(output, trg, trg_mask)
+        
+        mask_loss.backward()
+        
+        torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+        
+        optimizer.step()
+        
+        print_losses.append(mask_loss.item() * nTotal)
+        n_totals += nTotal
+    return sum(print_losses) / n_totals
+
+# Write a ai program to make better ai evaluate function generate
+def evaluate(model, iterator, criterion):
+    
+    model.eval()
+    
+    n_totals = 0
+    print_losses = []
+    
+    with torch.no_grad():
+    
+        for i, batch in tqdm(enumerate(iterator), total=len(iterator)):
+
+            src = batch.Input.permute(1, 0)
+            trg = batch.Output.permute(1, 0)
+            trg_mask = make_trg_mask(trg)
+
+            output, _ = model(src, trg[:,:-1])
+            
+            #output = [batch size, trg len - 1, output dim]
+            #trg = [batch size, trg len]
+            
+            output_dim = output.shape[-1]
+            
+            output = output.contiguous().view(-1, output_dim)
+            trg = trg[:,1:].contiguous().view(-1)
+            
+            #output = [batch size * trg len - 1, output dim]
+            #trg = [batch size * trg len - 1]
+            
+            mask_loss, nTotal = criterion(output, trg, trg_mask)
+
+            print_losses.append(mask_loss.item() * nTotal)
+            n_totals += nTotal
+
+        
+    return sum(print_losses) / n_totals
+
+# Write a ai program to make better ai epoch_time function generate
+def epoch_time(start_time, end_time):
+    elapsed_time = end_time - start_time
+    elapsed_mins = int(elapsed_time / 60)
+    elapsed_secs = int(elapsed_time - (elapsed_mins * 60))
+    return elapsed_mins, elapsed_secs
+
+# Write a ai program to make better ai learn function generate
+def learn(N_EPOCHS):
+    N_EPOCHS = N_EPOCHS
+    CLIP = 1
+    best_valid_loss = float('inf')
+
+    for epoch in range(N_EPOCHS):
+        import time
+        start_time = time.time()
+        
+        train_example = []
+        val_example = []
+
+        for i in range(train_df.shape[0]):
+            try:
+                ex = data.Example.fromlist([train_df.question[i], train_df.solution[i]], fields)
+                train_example.append(ex)
+            except:
+                pass
+
+        for i in range(val_df.shape[0]):
+            try:
+                ex = data.Example.fromlist([val_df.question[i], val_df.solution[i]], fields)
+                val_example.append(ex)
+            except:
+                pass       
+
+        train_data = data.Dataset(train_example, fields)
+        valid_data =  data.Dataset(val_example, fields)
+
+        BATCH_SIZE = 1
+        f = open('bs.txt', 'w', encoding='utf-8')
+        f.write(str(BATCH_SIZE))
+        train_iterator, valid_iterator = BucketIterator.splits((train_data, valid_data), batch_size = BATCH_SIZE, 
+                                                                    sort_key = lambda x: len(x.Input),
+                                                                    sort_within_batch=True, device = device)
+
+        train_loss = train(model, train_iterator, optimizer, criterion, CLIP)
+        valid_loss = evaluate(model, valid_iterator, criterion)
+        
+        end_time = time.time()
+        
+        epoch_mins, epoch_secs = epoch_time(start_time, end_time)
+        
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+            torch.save(model.state_dict(), 'code_create_model.pt')
+        
+        print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
+        print(f'\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
+        print(f'\t Val. Loss: {valid_loss:.3f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
+        f = open('loss.txt', 'w', encoding = 'utf-8')
+        f.write(f'{valid_loss:.0f}')
+
+# Write a ai program to make better ai learn function execution
+learn(N_EPOCHS=1000)
+
+# Write a ai program to make better ai SRC, TRG variable generate
+SRC = Input
+TRG = Output
+
+# Write a ai program to make better ai translate_sentence function generate
+def translate_sentence(sentence, src_field, trg_field, model, device, max_len = 50000):
+    
+    model.eval()
+        
+    if isinstance(sentence, str):
+        nlp = spacy.load('en')
+        tokens = [token.text.lower() for token in nlp(sentence)]
+    else:
+        tokens = [token.lower() for token in sentence]
+
+    tokens = [src_field.init_token] + tokens + [src_field.eos_token]
+        
+    src_indexes = [src_field.vocab.stoi[token] for token in tokens]
+
+    src_tensor = torch.LongTensor(src_indexes).unsqueeze(0).to(device)
+    
+    src_mask = model.make_src_mask(src_tensor)
+    
+    with torch.no_grad():
+        enc_src = model.encoder(src_tensor, src_mask)
+
+    trg_indexes = [trg_field.vocab.stoi[trg_field.init_token]]
+
+    for i in range(max_len):
+
+        trg_tensor = torch.LongTensor(trg_indexes).unsqueeze(0).to(device)
+
+        trg_mask = model.make_trg_mask(trg_tensor)
+        
+        with torch.no_grad():
+            output, attention = model.decoder(trg_tensor, enc_src, trg_mask, src_mask)
+        
+        pred_token = output.argmax(2)[:,-1].item()
+        
+        trg_indexes.append(pred_token)
+
+        if pred_token == trg_field.vocab.stoi[trg_field.eos_token]:
+            break
+    
+    trg_tokens = [trg_field.vocab.itos[i] for i in trg_indexes]
+    
+    return trg_tokens[1:], attention
+
+# Write a ai program to make better ai listToString function generate
+def listToString(str_list):
+    
+    result = ""
+
+    for s in str_list:
+
+        result += s + ""
+
+    return result.strip()
+
+# Write a ai program to make better ai now variable generate
+now = datetime.datetime.now()
+
+# Write a ai program to make better ai csv_writer2 function generate
+def csv_writer2(time, name_list):
+    with open('judgment data.csv', mode='a', newline='', encoding='utf-8') as RESULT_writer_file:
+        RESULT_writer = csv.writer(RESULT_writer_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        '''RESULT_writer.writerow(
+            ["file name", "loss", "EPOCH", "working time"])'''
+        for row in name_list: # 위의 name_list를 순차적으로 순회
+            RESULT_writer.writerow([row[0],row[1],row[2],row[3]]) # 각 행을 순차적으로 .csv 파일에 저장
+
+# Write a ai program to make better ai code_create function generate
+def code_create(src):
+    
+  src=src.split(" ")
+  translation, attention = translate_sentence(src, SRC, TRG, model, device)
+
+  print(f'predicted trg: \n')
+  # print(translation)
+  print(untokenize(translation[:-1]).decode('utf-8'))
+  f = open('ai.txt', 'w', encoding='utf-8')
+
+  f.write(untokenize(translation[:-1]).decode('utf-8'))
+
+# Write a ai program to make better ai gradio, translate moudule import 
+import gradio as gr
+from translate import Translator
+
+# Write a ai program to make better ai code_generation function generate
+def code_generation(text):
+    from translate import Translator
+    translator = Translator(from_lang="ko", to_lang="en")
+
+    translation = translator.translate(text)
+
+    src = translation
+
+    
+    code_create(src)
+
+    f2 = open('ai.txt', 'r', encoding='utf-8')
+    f3 = f2.readlines()
+
+    f4 = listToString(f3)
+    src2 = f4
+    image = src2
+
+    return image
+    
+# Write a ai program to make better ai improve_self_model function generate
+def improve_self_model(text):
+    f = open('feedback.txt', 'a', encoding = 'utf-8')
+    
+    from translate import Translator
+
+    translator = Translator(from_lang="ko", to_lang="en")
+
+    translation = translator.translate(text)
+
+    translation
+    f.write(translation)
+    f.write('\n')
+    
+    return text, '\n', 'Thank you for your feedback'
+
+# Write a ai program to make better ai n_epochs.txt file read and value load
+f = open("n_epochs.txt", 'r', encoding='utf-8')
+N_EPOCHS = listToString(f.readlines())
+N_EPOCHS = int(N_EPOCHS)
+
+# Write a ai program to make better ai code_create_model load
+model.load_state_dict(torch.load('code_create_model.pt'))
+
+# Write a ai program to make better ai self model code data load and preprocessing
+f = open("english_python_data (4).txt", "r", encoding='utf-8')
+file_lines = f.readlines()
+
+file_lines[:20]
+
+
+dps = []
+dp = None
+for line in file_lines:
+    if line[0] == "#":
+        if dp:
+            dp['solution'] = ''.join(dp['solution'])
+            dps.append(dp)
+        dp = {"question": None, "solution": []}
+        dp['question'] = line[1:]
+    else:
+        dp["solution"].append(line)
+i=0
+for dp in dps:
+    print("\n Question no: ", i+1)
+    i+=1
+    print(dp['question'][1:])
+    print(dp['solution'])
+    if i>49:
+        break
+print("Dataset size:", len(dps))
+import io
+from tokenize import tokenize, untokenize
+
+
+def tokenize_python_code(python_code_str):
+    python_tokens = list(tokenize(io.BytesIO(python_code_str.encode('utf-8')).readline))
+    tokenized_output = []
+    for i in range(0, len(python_tokens)):
+        tokenized_output.append((python_tokens[i].type, python_tokens[i].string))
+    return tokenized_output
+
+
+
+python_problems_df = pd.DataFrame(dps)
+
+
+
+import numpy as np
+
+np.random.seed(0)
+msk = np.random.rand(len(python_problems_df)) < 0.85 # Splitting data into 85% train and 15% validation
+
+train_df = python_problems_df[msk]
+question = train_df.question[0]
+
+answer = train_df.solution[0]  
+string3 = answer
+
+# Write a ai program to make better ai create a loop
+while True:
+
+    # Write a ai program to make better ai get command input
+    text = input("명령을 입력해주세요 : ")
+
+    # Write a ai program to make better ai if the command is end, stoping
+    if text == "end" :
+        break
+        
+    # Write a ai program to make better ai otherwise code create and evaluate
+    else:
+        
+    
+        src = text
+        
+        
+        code_create(src)
+        '''from improve_model import improve_model
+        from check_model import check'''
+        
+        f2 = open('ai.txt', 'r', encoding='utf-8')
+
+        f3 = f2.readlines()
+
+
+
+        f4 = listToString(f3)
+
+        src2 = f4
+        code = src2
+        print(code)
+        src3 = len(code)
+        print(src3)
+        correct = ""
+        human = ""
+        correct = ""
+        create = ""
+        put = input("평가를 시작하시겠습니까? : ")
+        if "start" in put:
+            if src3 >= 7 :
+                file_lines = listToString(file_lines)
+                
+
+
+                if code in file_lines:
+                    print("correct program")
+                    correct = "correct"
+                    #correct = "wrong"
+                    human = None
+                    create = "wrong"
+                    name_list = [[src, code, correct, human, correct, create]]
+                    csv_writer2(now, name_list)
+
+                else:
+                    print("사용자의 추가확인(2차확인)이 필요합니다 현재 1차확인은 실패하였습니다")
+                    check1, check2, check3, check4, check5 = input("데이터와 일치함, 맞춤법 올바름, 문법맞음, 띄어쓰기올바름, 명령취지맞음 : ").split(',')
+
+
+                    if "정답" in check1:
+
+                        correct = "correct"
+                        human = "correct"
+                        create = "wrong"
+                        f = open("correct.txt", 'w', encoding='utf-8')
+                        f.write(correct)
+                        f.close()
+                        f = open("human.txt", 'w', encoding='utf-8')
+                        f.write(human)
+                        f.close()
+                        f = open("create.txt", 'w', encoding='utf-8')
+                        f.write(create)
+                        f.close()
+                        name_list = [[src, code, correct, human, correct, create]]
+                        csv_writer2(now, name_list)
+
+                        #csv파일에 정답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+                        print("최종 확인 결과 정답으로 판단되었습니다")
+                    elif "오답" in check1:
+                        #csv파일에 오답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+
+                        f = open("check.py", "w", encoding='utf-8')
+                        f.write(code)
+                        f.close()
+                        import time
+                        time.sleep(30)
+                        import check
+                        # 나중에는 인공지능이 스스로 오류여부나 오답여부 등등을 인간에 판단데이터들을 바탕으로 직접 판단할수있게 만들기
+
+                        correct = "wrong"
+                        human = "wrong"
+                        f = open("correct.txt", 'w', encoding='utf-8')
+                        f.write(correct)
+                        f.close()
+                        f = open("human.txt", 'w', encoding='utf-8')
+                        f.write(human)
+                        f.close()
+                        a = input("창조된 코드인가요? : ")
+                        b = 0
+                        if "yes" in a:
+                            b += 1
+                            b = str(b)
+                            f = open('create_epoch' + b + '.txt', 'w', encoding='utf-8')
+                            f.write(str(N_EPOCHS))
+                            f.close()
+                            create = 'correct'
+                            name_list = [[src, code, correct, human, correct, create]]
+                            csv_writer2(now, name_list)
+                            f = open("create.txt", 'w', encoding='utf-8')
+                            f.write(create)
+                            f.close()
+                            print("최종 확인 결과 오답으로 판단되었습니다")
+                            print("오답인 코드이지만 창조된 코드입니다")
+                            
+                        elif "no" in a:
+                            create = 'wrong'
+                            name_list = [[src, code, correct, human, correct, create]]
+                            csv_writer2(now, name_list)
+                            f = open("create.txt", 'w', encoding='utf-8')
+                            f.write(create)
+                            f.close()
+                            print("최종 확인 결과 오답으로 판단되었습니다")
+                            print("오답인 코드의 오류 여부와 문제여부등을 확인하겠습니다(창조되지않음)")
+                            
+                    if "정답" in check2:
+    
+                        correct = "wrong"
+                        human = "correct"
+                        create = "wrong"
+                        word = "correct"
+                        
+                        f = open("word.txt", 'w', encoding='utf-8')
+                        f.write(word)
+                        f.close()
+                        #csv파일에 정답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+                        
+                    elif "오답" in check2:
+                        word = "wrong"
+                        f = open("word.txt", 'w', encoding='utf-8')
+                        f.write(word)
+                        f.close()
+                    if "정답" in check3:
+                        grammar = "correct"
+                        
+                        f = open("grammar.txt", 'w', encoding='utf-8')
+                        f.write(grammar)
+                        f.close()
+                        #csv파일에 정답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+                        
+                    elif "오답" in check3:
+                        grammar = "wrong"
+                        f = open("grammar.txt", 'w', encoding='utf-8')
+                        f.write(grammar)
+                        f.close()
+                    if "정답" in check4:
+                        jump = "correct"
+                        
+                        f = open("jump.txt", 'w', encoding='utf-8')
+                        f.write(jump)
+                        f.close()
+                        #csv파일에 정답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+                        
+                    elif "오답" in check4:
+                        jump = "wrong"
+                        f = open("jump.txt", 'w', encoding='utf-8')
+                        f.write(jump)
+                        f.close()
+                    if "정답" in check5:
+        
+                        com = "correct"#명령취지맞는지 확인
+                        f = open("com.txt", 'w', encoding='utf-8')
+                        f.write(com)
+                        f.close()
+                        #csv파일에 정답으로 입력한다(인간 판단 칸의 입력 및 최종 판단 칸에 입력)
+                        
+                    elif "오답" in check5:
+                        com = "wrong"
+                        f = open("com.txt", 'w', encoding='utf-8')
+                        f.write(com)
+                        f.close()
+                #judgment data.csv에서 할일 수행
+
+            else:
+                print("code is not code")
+            
+
+            print(src, 
+            code, 
+            correct, 
+            human, 
+            correct, 
+            create)
+            f = open("create.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            t = 0
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("correct.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+            
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("word.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("human.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("grammar.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("com.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+
+            f = open("jump.txt", 'r', encoding='utf-8')
+            f2 = listToString(f.readlines())
+            if f2 == "correct" :
+                t += 1
+                f = open('caculate.txt', 'w', encoding='utf-8')
+                f.write(str(t))
+                f.close()
+            
+            else:
+                t += 0
+                print(t)
+
+
+            f = open("caculate.txt", 'r', encoding='utf-8')
+            t = int(listToString(f.readlines()))
+            print(t)
+
+            accuracy = str(7 / t)
+            print(accuracy)
+
+            print("정확률은 " + accuracy + " 입니다")
+            f = open('accuracy.txt', 'w', encoding='utf-8')
+            f.write(accuracy)
+            f.close()
+            name_list = [[src, code, correct, human, correct, create, word, grammar, com, jump]]
+            csv_writer2(now, name_list)
+            def csv_writer3(time, name_list):
+                with open('know_synapse.csv', mode='a', newline='', encoding='utf-8') as RESULT_writer_file:
+                    RESULT_writer = csv.writer(RESULT_writer_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+                    '''RESULT_writer.writerow(
+                        ["file name", "loss", "EPOCH", "working time"])'''
+                    for row in name_list: # 위의 name_list를 순차적으로 순회
+                        RESULT_writer.writerow([row[0],row[1],row[2],row[3]]) # 각 행을 순차적으로 .csv 파일에 저장
+            now = datetime.datetime.now()
+            f = open("accuracy.txt", 'r', encoding='utf-8')
+            accuracy = listToString(f.readlines())
+
+            name = 'original_model.py'
+            f = open(name, "w", encoding='utf-8')
+            f.write(string3 + '\n')
+
+            f = open("n_epochs.txt", 'r', encoding='utf-8')
+            epoch = listToString(f.readlines())
+            f = open("loss.txt", 'r', encoding='utf-8')
+            loss = listToString(f.readlines())
+            f = open("time.txt", 'r', encoding='utf-8')
+            times = listToString(f.readlines())
+            f = open("lr.txt", 'r', encoding='utf-8')
+            lr = listToString(f.readlines())
+            f = open("bs.txt", 'r', encoding='utf-8')
+            bs = listToString(f.readlines())
+            f = open("optimizer.txt", 'r', encoding='utf-8')
+            optimizer = listToString(f.readlines())
+            print(name,loss,epoch,times,lr,bs,accuracy,optimizer)
+            name_list = [[name,loss,epoch,times,lr,bs,accuracy,optimizer]] 
+            csv_writer3(now, name_list)
+            src2 = input("사용 소감 : ")
+
+            if "bad program" in src2:
+                #learn(N_EPOCHS = 2) 처음에 이미 두번 학습함
+                
+                N_EPOCHS *= N_EPOCHS
+                learn(N_EPOCHS)
+                f = open("n_epochs.txt", 'w', encoding='utf-8')
+                f.write(str(N_EPOCHS))
+                f.close()
+            elif "good program" in src2:
+                print(str(N_EPOCHS) + "는 창조능력을 발휘할수있는 epoch수 입니다")
+                f = open("cr_ep.txt", 'w', encoding='utf-8')
+                f.write(str(N_EPOCHS))
+                f.close()
+                f = open("n_epochs.txt", 'w', encoding='utf-8')
+                f.write(str(N_EPOCHS))
+                f.close()
+
+        # Write a ai program to make better ai self-correction work start
+        import codegen_site
+        import re
+        import sys
+        from inspect import getframeinfo, stack
+        from pprint import pformat
+
+        def replace_me(value, as_comment=False):
+            """
+            ** ATTENTION **
+            CALLING THIS FUNCTION WILL MODIFY YOUR SOURCE CODE. KEEP BACKUPS.
+            Replaces the current souce code line with the given `value`, while keeping
+            the indentation level. If `as_comment` is True, then `value` is inserted
+            as a Python comment and pretty-printed.
+            Because inserting multi-line values changes the following line numbers,
+            don't mix multiple calls to `replace_me` with multi-line values.
+            """
+            caller = getframeinfo(stack()[1][0])
+            if caller.filename == '<stdin>':
+                raise ValueError("Can't use `replace_me` module in interactive interpreter.")
+
+            with open(caller.filename, 'r+', encoding='utf-8') as f:
+                lines = f.read().split('\n')
+                spaces, = re.match(r'^(\s*)', lines[caller.lineno-1]).groups()
+
+                if as_comment:
+                    if not isinstance(value, str):
+                        value = pformat(value, indent=4)
+                    value_lines = value.rstrip().split('\n')
+                    value_lines = (spaces + '# ' + l for l in value_lines)
+                else:
+                    value_lines = (spaces + l for l in str(value).split('\n'))
+
+                lines[caller.lineno-1] = '\n'.join(value_lines)
+
+                f.seek(0)
+                f.truncate()
+                f.write('\n'.join(lines))
+
+        def insert_comment(comment):
+            """
+            ** ATTENTION **
+            CALLING THIS FUNCTION WILL MODIFY YOUR SOURCE CODE. KEEP BACKUPS.
+            Inserts a Python comment in the next source code line. If a comment alraedy
+            exists, it'll be replaced. The current indentation level will be maintained,
+            multi-line values will be inserted as multiple comments, and non-str values
+            will be pretty-printed.
+            Because inserting multi-line comments changes the following line numbers,
+            don't mix multiple calls to `insert_comment` with multi-line comments.
+            """
+            caller = getframeinfo(stack()[1][0])
+            if caller.filename == '<stdin>':
+                raise ValueError("Can't use `replace_me` module in interactive interpreter.")
+                
+            line_number = caller.lineno-1
+            comment_line = line_number + 1
+            with open(caller.filename, 'r+', encoding='utf-8') as f:
+                lines = f.read().split('\n')
+                spaces, = re.match(r'^(\s*)', lines[line_number]).groups()
+
+                while comment_line < len(lines) and lines[comment_line].startswith(spaces + '#'):
+                    lines.pop(comment_line)
+
+                if not isinstance(comment, str):
+                    comment = pformat(comment, indent=4)
+
+                comment_lines = [spaces + '# ' + l for l in comment.rstrip().split('\n')]
+                lines = lines[:comment_line] + comment_lines + lines[comment_line:]
+
+                f.seek(0)
+                f.truncate()
+                f.write('\n'.join(lines))
+
+        NONE = {}
+        def test(value, expected=NONE):
+            """
+            ** ATTENTION **
+            CALLING THIS FUNCTION WILL MODIFY YOUR SOURCE CODE. KEEP BACKUPS.
+            If `expected` is not given, replaces with current line with an equality
+            assertion. This is useful when manually testing side-effect-free code to
+            automatically create automated tests.
+            """
+            if hasattr(value, '__next__'):
+                value = list(value)
+                
+            if expected is not NONE:
+                try:
+                    assert value == expected
+                except AssertionError:
+                    print('TEST FAILED: expected\n{}\ngot\n{}\n'.format(repr(expected), repr(value)))
+                    raise
+                return value
+
+            caller = getframeinfo(stack()[1][0])
+            if caller.filename == '<stdin>':
+                raise ValueError("Can't use `replace_me` module in interactive interpreter.")
+                
+            line_number = caller.lineno-1
+            with open(caller.filename, 'r+', encoding='utf-8') as f:
+                lines = f.read().split('\n')
+                spaces, rest = re.match(r'^(\s*)(.+\))', lines[line_number]).groups()
+                lines[line_number] = spaces + rest[:-1] + ', {})'.format(repr(value))
+                f.seek(0)
+                f.truncate()
+                f.write('\n'.join(lines))
+
+            return value
+
+        def hardcode_me(value):
+            """
+            ** ATTENTION **
+            CALLING THIS FUNCTION WILL MODIFY YOUR SOURCE CODE. KEEP BACKUPS.
+            Replaces the call to this functions with the hardcoded representation of
+            the given. Limitations: must use the function "hardcode_me" and the call
+            must be a single line.
+                assert hardcode_me(1+1) == 2
+            becomes
+                assert 2 == 2
+            This code does a string replacement in a very naive way, so don't try
+            tricky situations (e.g. having a string containing "hardcode_me()" in the
+            same line).
+            """
+            import re
+
+            caller = getframeinfo(stack()[1][0])
+            if caller.filename == '<stdin>':
+                raise ValueError("Can't use `replace_me` module in interactive interpreter.")
+            if len(caller.code_context) != 1 or 'hardcode_me' not in caller.code_context[0]:
+                raise ValueError("Can only hardcode single-line calls that use the name 'hardcode_me'.")
+
+            line_number = caller.lineno-1
+            with open(caller.filename, 'r+', encoding='utf-8') as f:
+                lines = f.read().split('\n')
+
+                line = lines[line_number]
+
+                def replace(match):
+                    # Our goal here is to replace everything inside the matching
+                    # parenthesis, while ignoring literal strings.
+                    parens = 1
+                    index = 0
+                    string = match.group(1)
+                    while parens:
+                        if string[index] == ')':
+                            parens -= 1
+                        elif string[index] == '(':
+                            parens += 1
+                        elif string[index] in '"\'':
+                            while index is not None:
+                                index = string.index(string[index], index+1)
+                                if string[index-1] != '\\':
+                                    # TODO: \\" breaks this
+                                    break
+                        if index is None or index >= len(string):
+                            raise ValueError('Found unbalaced parenthesis while trying to hardcode value. Did you use line breaks?')
+                        index += 1
+                    return repr(value) + string[index:]
+                modified_line = re.sub(r'(?:replace_me\.)?hardcode_me\((.+)', replace, line)
+
+                lines = lines[:line_number] + [modified_line] + lines[line_number+1:]
+                f.seek(0)
+                f.truncate()
+                f.write('\n'.join(lines))
+
+            return value
+
+        def listToString(str_list):
+            
+            result = ""
+
+            for s in str_list:
+
+                result += s + ""
+
+            return result.strip()
+        import random
+
+        # Write a ai program to make better ai data augmentation start
+        answer_way1 = 'Set the batch size and learning rate (learning rate) at the same time to set the learning rate to 0.1, continuously increasing by 0.1, and increase the batch size by 2, starting with 1.'
+
+        answer_way2 = 'Set the batch size and learning rate at the same time, set the learning rate to 0.9 and continue to decrease by 0.1, and the batch size to start at 128 and decrease by 2 to achieve a small batch size and low learning rate.'
+
+        answer_way3 = 'Add an activation function and add 4 each to compare the performance Write code that uses the best activation function'
+        answer_waylist = []
+        answer_waylist.append(answer_way1)
+        answer_waylist.append(answer_way2)
+        answer_waylist.append(answer_way3)
+        answer_way = random.choice(answer_waylist)
+        try:
+            import data_augmentation
+            f3 = data_augmentation.data_augmentation.f3
+            a = 3
+            for i in range(f3):
+                a += 1
+                num = str(a)
+            num = num
+        except:
+            pass
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        try:
+            from data_augmentation import data_augmentation
+            data_augmentation()
+        except:
+            pass
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        # Write a ai program to make better ai self_improve moudule import 
+        import self_improve
+        
+        # Write a ai program to make better ai error modifying
+        Stemmer = PorterStemmer()
+        def tokenize(sentence):
+            return nltk.word_tokenize(sentence)
+        def stem(word):
+            return Stemmer.stem(word.lower())
+        def bag_of_words(tokenized_sentence, words):
+            sentence_word = [stem(word) for word in tokenized_sentence]
+            bag = np.zeros(len(words), dtype=np.float32)
+            for idx, w in enumerate(words):
+                if w in sentence_word:
+                    bag[idx] = 1
+            return bag    
+        with open("오류수정 ai datasets.json", encoding='utf-8', errors='ignore') as json_data:
+            intents = json.load(json_data, strict=False)
+        all_words = []
+        tags = []
+        xy = []
+        for intent in intents['intents']:
+            tag = intent['tag']
+            tags.append(tag)
+            for pattern in intent['patterns']:
+                print(pattern)
+                w = tokenize(pattern)
+                all_words.extend(w)
+                xy.append((w,tag))
+        import webbrowser
+        from subprocess import PIPE, Popen
+        import requests
+        def execute_return(cmd):
+            args = cmd.split()
+            proc = Popen(args, stdout=PIPE, stderr=PIPE)
+            out, err = proc.communicate()
+            return out, err
+        def mak_req(error):
+            resp = requests.get("https://api.stackexchange.com/" +
+                                "/2.2/search?order=desc&tagged=python&sort=activity&intitle={}&site=stackoverflow".format(error))
+            return resp.json()
+        def get_urls(json_dict):
+            url_list = []
+            count = 0
+            for i in json_dict['items']:
+                if i['is_answered']:
+                    url_list.append(i["link"])
+                count += 1
+                if count == 3 or count == len(i):
+                    break
+            for i in url_list:
+                webbrowser.open(i)
+        out, err = execute_return("python storm(remake).py")
+        erro = err.decode("utf-8").strip().split("\r\n")[-1]
+        print(erro)
+        if erro:
+            filter_error = erro.split(":")
+            json1 = mak_req(filter_error[0])
+            json2 = mak_req(filter_error[1])
+            json = mak_req(erro)
+            get_urls(json1)
+            get_urls(json2)
+            get_urls(json)
+        else:
+            print("No error")
+        query = erro 
+        query = query.lower()
+        import random
+        reply = random.choice(intent["responses"])
+        print((1,5000) in query)
+        error = (1,5000) in query
+        with open("storm(remake).py", 'r', encoding='utf-8') as f:
+            data = f.readlines()[error]
+            f.truncate()[error]
+            print("제가 에러가난줄을 삭제해뒀습니다 제가알려드리는 에러 해결방법에 따라 에러를 해결해주세요")
+            print(reply)
+
+#Write a ai program to make better ai time caculate final
+import time
+end = time.time()
+
+print(f"{end - start:.5f} sec")
+sec = (f"{end - start:.0f}")
+print(sec)
+
+f = open('time.txt', 'w', encoding='utf-8')
+f.write(sec)
+

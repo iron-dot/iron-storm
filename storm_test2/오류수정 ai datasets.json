@@ -1,0 +1,117 @@
+{
+    "intents":[
+        {
+            "tag":"question1",
+            "patterns":["UnicodeEncodeError: 'ascii' codec can't encode characters in position 44-46: ordinal not in range(128)"
+            ],
+            "responses":["해결법:Default 인코딩을 UTF-8로 직접 지정을 해주어야 한다import sysreload(sys)sys.setdefaultencoding('utf8')Default 인코딩을 UTF-8로 직접 지정을 해주어야 한다"
+            ]
+
+        },
+        {
+        
+            "tag":"question",
+            "patterns":["pip를 업그레이드 하다가 갑자기 오류가 발생했을 경우C:INDOWSstem32>pip uninstallTraceback (most recent call last):File h:ythonibunpy.py, line 197, in _run_module_as_mainreturn _run_code(code, main_globals, None,File 'h:"
+            ],
+            "responses":["해결법:먼저 python -m ensurepip를 실행 한 다음 python -m pip install upgrade pip를 실행하면 됩니다. 이는 pip를 다시 설치하는 것과 같습니다."
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["XHR failed error"
+            ],
+            "responses":["해결법:path 지정은 설치된 python과 anaconda를 전부 삭제하고 새로 설치하면서 어디에 설치됐는지 경로를 확인했다.그 후 '제어판 > 시스템 > 고급 시스템 설정 > 고급 > 환경 변수(N) > 시스템 변수(S) > PATH에서 python 경로를 새로 추가해주시면됩니다비주얼 스튜디오 마켓플레이스에 접속하여 extension 들을 수동으로 다운로드 후 수동 설치하는 것으로 해결할수있다유료백신인 kaspersky가 문제였다. 이 오류들의 원인과 어떻게든 해결해보고자 시간을 허비했으나 유료백신을 중지하면해결할수있다"
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["CondaHTTPError"
+            ],
+            "responses":["해결법:특정 파일을 CONDA_PATHibrarybin 에서 CONDA_PATHLL로 복사하는 것은 따라하기, conda install openssl 을 실행하라는 조언을 따르면된다, 유료백신인 kaspersky가 문제였다. 이 오류들의 원인과 어떻게든 해결해보고자 시간을 허비했으나 유료백신을 중지하면해결할수있다"
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["ConnectionResetError"
+            ],
+            "responses":["해결법:유료백신인 kaspersky가 문제였다. 이 오류들의 원인과 어떻게든 해결해보고자 시간을 허비했으나 유료백신을 중지하면해결할수있다"
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["KeyError"
+            ],
+            "responses":["해결법:'키 없음'주로 딕셔너리 사용시 발생하는 에러없는 Key 값에 접근하려고 할 때 발생이럴 때 get() 메소드를 사용할 수 있다① 딕셔너리['키']가 먼저 나온 상황② 딕셔너리.get('키')가 먼저 나온 상황 ①과 ②의 차이점①처럼 Bracket Notation으로 객체의 없는 키에 접근하면 KeyError가 나면서 밑의 코드는 실행되지 않게 된다(=> http 요청 받는 상황에서 발생하면 서버 터짐)하지만 ②처럼 get메소드로 객체의 없는 키에 접근하면 None(혹은 설정한 값)을 반환하고 이어서 밑의 코드를 쭉 실행한다방법2가지:1. if 조건문12345678910>>>score_lst=[1,0,1,1,0,1]>>>score_dic={}>>>forscoreinscore_lst:...ifscoreinscore_dic:...    score_dic[score]+=1...else:...score_dic[score]=1...>>>score_dic{1:4,0:2}csif Key in dic을 하게 되면 key가 사전에 있는지 체크하여 있으면 True 값을, 없으면 False 값을 반환하는 것을 이용하여조건문을 작성합니다.2. try-except12345678910>>>score_lst=[1,0,1,1,0,1]>>>score_dic={}>>>forscoreinscore_lst:...try:...    score_dic[score]+=1...exceptKeyError:...score_dic[score]=1...>>>score_dic{1:4,0:2}cs원본 코드에서 없는 key를 사전에 접근하였을 때 KeyError 가 발생하는 것을 활용하여,try-except 문을 작성합니다."
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["ValueError"
+            ],
+            "responses":["① 부적절한 값을 가진 인자를 받았을 때 발생하는 에int함수 안에는 int('10')과 같이 숫자로 변경할 수 있는 문자열이 와야 하는데, 이렇게 숫자로 변경할 수 없는 문자열이 오는 것처럼 부적절한 인자가 올 때 발생② 참조값이 없을 때리스트에서 없는 값에 접근하려고 할 때 발생③ cf) IndexError없는 인덱스 값에 접근하려고 할 때 발생또한Try - Except 구문을 while문에 추가해주시면 바로 해결됩니다.예시:While True:try:#Your source code#..except Exception:break"
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["TypeError"
+            ],
+            "responses":["서로 다른 타입으로 연산하려고 할 때 발생바로 Class의 선언이 없기 때문입니다.이러한 에러를 해결하기 위해서는 main 소스를 다음과 같이 수정해볼 수 있습니다.main 선언(오류 해결)#python 3.x source#FileName : TestMain.pyfrom TestClass import Testdef main():T = Test()Data = 0x01234567T.TestFunc(Data)if __name__ == '__main__':main()오류가 해결된 소스의 7번 줄과 11번 줄을 보면 Test라는 클래스를 따로 선언을 해준 뒤 이를 이용하여 함수를 불러오는 것을 확인할 수 있습니다.즉, Class의 선언 없이 해당 클래스의 함수를 사용하려 했기 때문에 발생하는 오류를 해결해준 것입니다."
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["FileNotFoundError"
+            ],
+            "responses":["존재하지 않는 파일이나 디렉토리에 접근하려 할 해결법:1. IDLE (GUI)를 사용하고 있으므로 스크립트가있는 디렉토리에서 스크립트가 실행되지 않을 수 있습니다. 가장 좋은 대안은 다음과 같은 것입니다.import os.pathscriptpath = os.path.dirname(__file__filename = os.path.join(scriptpath, 'test.txt')estFile=open(filename)print(testFile.read())os.path.dirname (__ file __) 은 현재 실행중인 스크립트가있는 디렉토리를 찾습니다. 그런 다음 os.path.join 을 사용하여 해당 경로를 test.txt 앞에 추가합니다.이것이 작동하지 않으면 test.txt 가 실제로 실행중인 스크립트와 동일한 디렉토리에 있지 않다고 추측 할 수 있습니다.2. 경로를 정확히 입력해준다(정확한경로를 입력하면 대부분 해결된다)"
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["ZeroDivisionError"
+            ],
+            "responses":["숫자를 0으로 나누려는 경우 발생해결방법은 try-except 문을 사용하시면 됩니다.예시(try-except 의 형태):try-except 문은 다음과 같이 try안에 먼저 수행하고 싶은 문장을 넣고,그것이 오류가 났을 때 할 문장을 except에 넣으시면 됩니다.try:<statement>excepttype_of_erro<statement특히 except에는 오류의 종류를 적어서 특정 오류만 집어서 수행하게 할 수도 있습니다.러면 코드를 수정해서 0으로 나눌때는 ZeroDivision이라고 출력하고 지나가게 해봅시다.lst=[1,3,5,0,2foriinlsttry:print(10/i)exceptZeroDivisionError:print('ZeroDivision')"
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["NameError"
+            ],
+            "responses":["전역변수의 이름을 찾을 수 없는 경우 발생변수 이름이 틀렸거나 없는 변수를 사용하면 이름 오류(NameError)가 발생합니다.      REPL 변수 이름이 틀렸을 때>>> nama = '파이썬'>>> print(name)raceback (most recent call last):File '<stdin>', line 1, in <module>NameError: name 'name' is not defined오류 메시지를 봐선 아무런 정보도 얻을 수 없습니다. 분명 name 변수에 값을 할당해서 print문으로 가져왔는데 ‘이름을 찾을 수 없다(name'name' is not defined)’는 메시지가 나타난 걸까요?이럴 때는 정말로 name 변수가 있는지 확인해야 합니다"
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["SyntaxError"
+            ],
+            "responses":["문법 오류이렇게 조건문에서 :을 빼먹거나 문법이 잘못될 때 발생해결책 : 오류난 문법 위치를 찾아 수정해야 함.- print(  ) 함수에서 작은 따옴표를 넣었는지 확인- 연산시 등호를 사용했는지 확인 등"
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["AttributeError"
+            ],
+            "responses":["잘못된 메서드나 속성을 호출하거나 대입했을 때 발생해결법:호출한 모듈명과 파일명이 같으면 안된다는 것!즉, turtle 이라는 모듈을 호출하고 있는데 파일명이 turtle.py 라서conflict 가 발생하는 것입니다.정확히 왜 충돌이 이러나는지는 모르겠네요. 파이썬 자체 동작 프로세스에 걸리는 듯 합니다."
+            ]
+
+        },
+        {
+            "tag":"question",
+            "patterns":["ConnectionError"
+            ],
+            "responses":["서버를 켜지 않았을 때 발anage.py 가 있는 프로젝트 디렉토리로 이동하여 python manage.py runserver 실python manage.py runserver 0:8000 모든 컴퓨터에서 내 서버로 접속 가능우선 둘다 결과적으로 다음과 같은 에러가 나는 것 같은데요.Max retries exceeded with url이 부분은 너무 많이 동일한 API 를 호출했다고 하는 것 같아요. 보통은 다음 링크처럼, 이러한 에러는 단기간에 반복문이든, 여러 반복적 테스트든 단기간에 요청을 너무 많이 하셔서 나타나는 문제이거든요.https://www.codeit.kr/community/threads/3245그렇다면, 조금 시간이 지난 후에 단 한번만 호출해보신다면, 문제가 없어야 할 듯 합니다 이 부분은 아마도 하루정도는 최소한 시간이 지났을 것이라서, 현재는 일어나지 않을 것 같습니다"
+           ]
+
+        }
+    ]
+}
